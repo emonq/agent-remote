@@ -10,6 +10,8 @@ Agent ◀──answer──────── 本服务 ◀──WS 长连接─
 
 飞书走官方 SDK 的 WebSocket 长连接收事件，**不需要公网 IP / 域名 / 回调 URL**，可跑在本机或内网。
 
+两种部署形态：**单用户**（一个 token 直接用）和**多用户**（OIDC SSO 登录、每用户 token、飞书绑定、事件历史、网页管理台）。
+
 ## 飞书侧配置（一次性）
 
 1. [飞书开放平台](https://open.feishu.cn) / [Lark](https://open.larksuite.com) → 创建**企业自建应用**，拿到 `App ID` / `App Secret`
@@ -32,9 +34,11 @@ docker compose up -d --build
 
 ## 接给 Claude Code
 
+单用户模式用 env 里的 `MCP_TOKEN`；多用户模式在网页上拿自己的 token：
+
 ```bash
 claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
-  --header "Authorization: Bearer <MCP_TOKEN>"
+  --header "Authorization: Bearer <TOKEN>"
 ```
 
 agent 等待回复较久，调大客户端工具超时（默认 30s 会提前砍掉调用）：
@@ -52,13 +56,29 @@ export MCP_TOOL_TIMEOUT=1200000   # 20 分钟, 单位 ms
 - 超时 → 返回 `{"timeout": true}`，agent 自行决定默认行为
 - 完成后卡片变绿（已回复）/ 灰色（超时）
 
+## 多用户模式（可选）
+
+单用户模式只填 `MCP_TOKEN` + `FEISHU_USER_OPEN_ID`。要多用户（SSO 登录、每用户 token、事件历史）改填：
+
+```
+OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_SECRET
+```
+
+任意标准 OIDC IdP（Keycloak / Authentik / Auth0 / Logto / Zitadel…）都行。用户流程：
+
+1. 访问服务首页 → 跳 IdP 登录 → 自动建账号
+2. 网页上点「生成绑定码」→ 在飞书给机器人发 `/bind 123456` → 完成飞书绑定（一个飞书号绑一个账号）
+3. 网页查看/重置自己的 API token，接入方式与单用户相同（`Bearer <自己的 token>`）
+
+所有事件（提问/回复/超时/hook/绑定）记入 SQLite（`data/agent-remote.db`，docker 已挂卷），网页可查最近 30 条。
+
 ## 多设备标注来源（可选）
 
 一个 token 多个设备用，接入时加 `X-Client-Name` 请求头标注来源，卡片标题显示 `🤖 laptop 需要你的决策`：
 
 ```bash
 claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
-  --header "Authorization: Bearer <MCP_TOKEN>" \
+  --header "Authorization: Bearer <TOKEN>" \
   --header "X-Client-Name: laptop"
 ```
 

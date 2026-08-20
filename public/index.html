@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-remote</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  h1 { font-size: 1.3rem; }
+  h2 { font-size: 1rem; margin-top: 2rem; color: #666; }
+  code, .token { font-family: ui-monospace, monospace; background: rgba(127,127,127,.15); padding: .1em .4em; border-radius: 4px; word-break: break-all; }
+  .card { border: 1px solid rgba(127,127,127,.3); border-radius: 8px; padding: 1rem; margin: .5rem 0; }
+  button { font: inherit; padding: .3rem .9rem; border-radius: 6px; border: 1px solid rgba(127,127,127,.4); background: inherit; cursor: pointer; }
+  button:hover { background: rgba(127,127,127,.15); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid rgba(127,127,127,.2); }
+  .muted { color: #888; font-size: 13px; }
+  .ok { color: #2a2; } .warn { color: #c60; }
+</style>
+</head>
+<body>
+<h1>agent-remote</h1>
+<div id="app">加载中…</div>
+
+<script>
+const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; };
+
+async function main() {
+  const me = await fetch('/api/me').then((r) => r.json()).catch(() => null);
+  const app = document.getElementById('app');
+
+  if (!me) { app.textContent = '服务异常'; return; }
+  if (me.login) { location.href = me.login; return; } // 未登录 → OIDC
+
+  app.append($(''), $(''));
+  app.append($(`<h2>账号</h2>`));
+  app.append($(`<div class="card">${me.name}${me.bound ? ' · <span class="ok">已绑定飞书</span>' : ' · <span class="warn">未绑定飞书</span>'}</div>`));
+
+  // 飞书绑定
+  app.append($('<h2>飞书绑定</h2>'));
+  const bindCard = $('<div class="card"></div>');
+  app.append(bindCard);
+  const renderBind = (code) => {
+    bindCard.innerHTML = code
+      ? `在飞书里给机器人发: <code>/bind ${code}</code><div class="muted">10 分钟内有效</div>`
+      : `<button id="bind">生成绑定码</button><span class="muted"> 在飞书发送即可完成绑定</span>`;
+    if (!code) bindCard.querySelector('#bind').onclick = async () => {
+      const r = await fetch('/api/bind-code', { method: 'POST' }).then((r) => r.json());
+      renderBind(r.code);
+    };
+  };
+  renderBind();
+
+  // token
+  app.append($('<h2>API Token</h2>'));
+  const tokenCard = $('<div class="card"></div>');
+  app.append(tokenCard);
+  const renderToken = async () => {
+    const t = (await fetch('/api/token').then((r) => r.json())).token;
+    tokenCard.innerHTML = `<span class="token">${t}</span><div><button id="rot">重置 token</button> <span class="muted">重置后旧 token 立即失效</span></div>`;
+    tokenCard.querySelector('#rot').onclick = async () => {
+      if (!confirm('重置后所有使用旧 token 的客户端都会失效, 继续?')) return;
+      const r = await fetch('/api/rotate-token', { method: 'POST' }).then((r) => r.json());
+      tokenCard.querySelector('.token').textContent = r.token;
+    };
+  };
+  renderToken();
+
+  // 事件
+  app.append($('<h2>最近事件</h2>'));
+  const ev = $('<table><thead><tr><th>时间</th><th>类型</th><th>内容</th></tr></thead><tbody></tbody></table>');
+  app.append(ev);
+  const typeZh = { ask: '提问', solved: '已回复', timeout: '超时', hook: 'hook 通知', bind: '绑定', token_rotated: '重置token' };
+  for (const e of me.events || []) {
+    const p = JSON.parse(e.payload);
+    const detail = p.question ? String(p.question).slice(0, 60) : (p.message || p.answer || '');
+    ev.querySelector('tbody').append($(`<tr><td class="muted">${new Date(e.created_at).toLocaleString()}</td><td>${typeZh[e.type] || e.type}</td><td>${String(detail).slice(0, 80)}</td></tr>`));
+  }
+  if (!me.events?.length) ev.querySelector('tbody').append($('<tr><td colspan=3 class="muted">暂无</td></tr>'));
+}
+main();
+</script>
+</body>
+</html>

@@ -1,11 +1,11 @@
-// 自检: pending 生命周期 / 按钮匹配 / 自由文本匹配 / 卡片构造 (不依赖飞书)
+// 自检: pending 生命周期 / 匹配规则 / 卡片构造 / 绑定码 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard, hookCard } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
   let resolved;
-  const id = createPending({ resolve: (a) => { resolved = a; }, options: ['a', 'b'], question: 'Q?', timeoutMinutes: 1 });
+  const id = createPending({ resolve: (a) => { resolved = a; }, userId: 'u1', options: ['a', 'b'], question: 'Q?', timeoutMinutes: 1 });
   setMessageId(id, 'om_1');
   assert.equal(pending.size, 1);
   assert.ok(resolvePending(id, 'b'));
@@ -17,26 +17,34 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
 // 2. 自由文本: 引用回复精确匹配
 {
   let resolved;
-  const id = createPending({ resolve: (a) => { resolved = a; }, options: null, question: 'Q?', timeoutMinutes: 1 });
+  const id = createPending({ resolve: (a) => { resolved = a; }, userId: 'u1', options: null, question: 'Q?', timeoutMinutes: 1 });
   setMessageId(id, 'om_2');
-  const hit = matchFreeText({ parentId: 'om_2', text: '用方案 B' });
+  const hit = matchFreeText({ userId: 'u1', parentId: 'om_2', text: '用方案 B' });
   assert.ok(hit && hit.id === id);
   assert.equal(resolved, '用方案 B');
 }
 
-// 3. 自由文本: 无引用时仅一条 pending 才兜底, 两条并行不猜 (由第 8 组覆盖), 这里验证单条命中
+// 3. 自由文本: 无引用时仅一条 pending 才兜底
 {
   const answers = [];
-  const a = createPending({ resolve: (v) => answers.push(v), options: null, question: 'A?', timeoutMinutes: 1 });
-  const hit = matchFreeText({ parentId: null, text: 'ok' });
+  const a = createPending({ resolve: (v) => answers.push(v), userId: 'u2', options: null, question: 'A?', timeoutMinutes: 1 });
+  const hit = matchFreeText({ userId: 'u2', parentId: null, text: 'ok' });
   assert.equal(hit.id, a);
   assert.deepEqual(answers, ['ok']);
+}
+
+// 3b. 用户隔离: u2 的回复不能命中 u3 的 pending
+{
+  const answers = [];
+  createPending({ resolve: (v) => answers.push(v), userId: 'u3', options: null, question: 'A?', timeoutMinutes: 1 });
+  assert.equal(matchFreeText({ userId: 'u2', parentId: null, text: '不是我的' }), null);
+  assert.deepEqual(answers, []);
 }
 
 // 4. 有选项的 pending 不参与自由文本兜底
 {
   let resolved = 'unset';
-  const id = createPending({ resolve: (v) => { resolved = v; }, options: ['x'], question: 'Q?', timeoutMinutes: 1 });
+  const id = createPending({ resolve: (v) => { resolved = v; }, userId: 'u1', options: ['x'], question: 'Q?', timeoutMinutes: 1 });
   assert.equal(matchFreeText({ parentId: null, text: 'hi' }), null);
   assert.equal(resolved, 'unset');
   resolvePending(id, 'clean'); // 清理, 别泄漏给后面的用例
@@ -45,7 +53,7 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
 // 5. 超时: resolve(null)
 {
   let resolved;
-  const id = createPending({ resolve: (a) => { resolved = a; }, options: null, question: 'Q?', timeoutMinutes: 1 });
+  const id = createPending({ resolve: (a) => { resolved = a; }, userId: 'u1', options: null, question: 'Q?', timeoutMinutes: 1 });
   await new Promise((r) => setTimeout(r, 50));
   assert.equal(resolved, undefined, '未到时不触发');
   resolvePending(id, 'clean'); // 清理
@@ -79,22 +87,19 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
 // 8. 引用回复精确路由 + 并发不猜
 {
   const answers = {};
-  const a = createPending({ resolve: (v) => { answers.a = v; }, options: null, question: 'A?', source: 'work-laptop', timeoutMinutes: 1 });
+  const a = createPending({ resolve: (v) => { answers.a = v; }, userId: 'u1', options: null, question: 'A?', source: 'work-laptop', timeoutMinutes: 1 });
   setMessageId(a, 'om_a');
-  const b = createPending({ resolve: (v) => { answers.b = v; }, options: null, question: 'B?', source: 'ci-runner', timeoutMinutes: 1 });
+  const b = createPending({ resolve: (v) => { answers.b = v; }, userId: 'u1', options: null, question: 'B?', source: 'ci-runner', timeoutMinutes: 1 });
   setMessageId(b, 'om_b');
 
-  // 两条并行: 无引用不猜
-  assert.equal(matchFreeText({ parentId: null, text: '无引用并行两条' }), null, '两条并行无引用不猜');
+  assert.equal(matchFreeText({ userId: 'u1', parentId: null, text: '无引用并行两条' }), null, '两条并行无引用不猜');
 
-  // 引用 b 命中 b, a 不受影响
-  const hit = matchFreeText({ parentId: 'om_b', text: '用方案B' });
+  const hit = matchFreeText({ userId: 'u1', parentId: 'om_b', text: '用方案B' });
   assert.equal(hit.id, b);
   assert.equal(answers.b, '用方案B');
   assert.equal(answers.a, undefined, 'a 未被误伤');
 
-  // 只剩 a 一条, 无引用兜底命中
-  const hit2 = matchFreeText({ parentId: null, text: '就这样' });
+  const hit2 = matchFreeText({ userId: 'u1', parentId: null, text: '就这样' });
   assert.equal(hit2.id, a);
   assert.equal(answers.a, '就这样');
 }
@@ -106,6 +111,15 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
   assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
   const done = resolvedCard('Q', 'ok', false, 'ci-runner');
   assert.ok(/ci-runner/.test(done.header.title.content));
+}
+
+// 10. 绑定码: 一次性 + 过期
+{
+  const code = issueBindCode('u9');
+  assert.equal(takeBindCode(code), 'u9');
+  assert.equal(takeBindCode(code), null, '绑定码一次性');
+  assert.equal(takeBindCode('000000'), null, '无效码');
+  assert.match(code, /^\d{6}$/);
 }
 
 console.log('all tests passed');

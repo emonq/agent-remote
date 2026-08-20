@@ -1,7 +1,8 @@
 // 纯逻辑: pending 决策管理 + 卡片构造 (无副作用, 供 server 和 test 导入)
 import crypto from 'node:crypto';
 
-export const pending = new Map(); // decisionId -> { resolve, messageId, options, question, timer }
+// decisionId -> { resolve, userId, messageId, options, question, source, timer }
+export const pending = new Map();
 
 export function resolvePending(id, answer) {
   const p = pending.get(id);
@@ -13,14 +14,14 @@ export function resolvePending(id, answer) {
 }
 
 // id 需先于卡片发送生成(按钮 value 要带), messageId 发送后才知道 — 所以两步注册
-export function createPending({ resolve, options, question, source, timeoutMinutes, onTimeout }) {
+export function createPending({ resolve, userId, options, question, source, timeoutMinutes, onTimeout }) {
   const id = crypto.randomUUID();
   const timer = setTimeout(() => {
     pending.delete(id);
     onTimeout?.();
     resolve(null); // null = 超时
   }, timeoutMinutes * 60_000);
-  pending.set(id, { resolve, messageId: null, options, question, source, timer });
+  pending.set(id, { resolve, userId, messageId: null, options, question, source, timer });
   return id;
 }
 
@@ -29,19 +30,22 @@ export function setMessageId(id, messageId) {
   if (p) p.messageId = messageId;
 }
 
+export const pendingForUser = (userId) => [...pending.values()].filter((p) => p.userId === userId);
+
 // 自由文本匹配:
 // 1. 引用回复(parent_id) 精确匹配
-// 2. 仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
-export function matchFreeText({ parentId, text }) {
+// 2. 该用户仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
+export function matchFreeText({ userId, parentId, text }) {
   if (parentId) {
     for (const [id, p] of pending) {
       if (p.messageId === parentId && resolvePending(id, text)) return { id, p };
     }
   }
-  const open = [...pending.entries()].filter(([, p]) => !p.options?.length);
+  const open = pendingForUser(userId).filter((p) => !p.options?.length);
   if (open.length === 1) {
-    const [id, p] = open[0];
-    if (resolvePending(id, text)) return { id, p };
+    const p = open[0];
+    const id = [...pending.entries()].find(([, v]) => v === p)?.[0];
+    if (id && resolvePending(id, text)) return { id, p };
   }
   return null;
 }
@@ -97,4 +101,20 @@ export function hookCard(hook = {}) {
     header: { template: 'blue', title: { tag: 'plain_text', content: `${m.icon} ${m.title}${where}` } },
     elements: [{ tag: 'markdown', content: m.body }],
   };
+}
+
+// 飞书绑定码: 6 位数字, 10 分钟有效, 内存即可 (重启丢的是未完成的绑定, 无害)
+const bindCodes = new Map(); // code -> { userId, expires }
+export function issueBindCode(userId) {
+  // ponytail: 6 位数字空间小, 但单实例自用+10min 过期足够; 要抗爆破再加速率限制
+  const code = crypto.randomInt(100000, 1000000).toString();
+  bindCodes.set(code, { userId, expires: Date.now() + 600_000 });
+  for (const [c, v] of bindCodes) if (v.expires < Date.now()) bindCodes.delete(c);
+  return code;
+}
+export function takeBindCode(code) {
+  const v = bindCodes.get(String(code).trim());
+  if (!v || v.expires < Date.now()) return null;
+  bindCodes.delete(code);
+  return v.userId;
 }

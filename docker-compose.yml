@@ -3,5 +3,7 @@ services:
     build: .
     restart: unless-stopped
     env_file: .env
+    volumes:
+      - ./data:/app/data   # SQLite 持久化
     ports:
-      - "3000:3000"   # MCP endpoint; 只给本机 agent 用就改 "127.0.0.1:3000:3000"
+      - "3000:3000"   # MCP/webhook endpoint; 只给本机用改 "127.0.0.1:3000:3000"

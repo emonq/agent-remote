@@ -1,51 +1,40 @@
-// agent-remote: MCP 中心服务 — agent 阻塞式问用户，飞书收发
-// MCP: Streamable HTTP + Bearer token;  飞书: 官方 SDK WebSocket 长连接(免公网回调)
+// agent-remote: 多用户 MCP 中心服务 — agent 阻塞式问用户, 飞书收发, OIDC 登录
+// MCP: Streamable HTTP + 每用户 token;  飞书: 官方 SDK WS 长连接(免公网回调)
 import express from 'express';
+import crypto from 'node:crypto';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard, hookCard } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
+import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, logEvent, listEvents } from './db.mjs';
+import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession } from './auth.mjs';
 
 const {
-  MCP_TOKEN,            // MCP Bearer token (自定义); 多设备用请求头 X-Client-Name 标注来源
+  MCP_TOKEN,            // 未配 SSO 时的单用户 token (兼容旧部署)
   FEISHU_APP_ID,
   FEISHU_APP_SECRET,
-  FEISHU_USER_OPEN_ID,  // 接收决策消息的用户 (open_id, ou_ 开头)
   PORT = 3000,
 } = process.env;
 
-if (!MCP_TOKEN || !FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_USER_OPEN_ID) {
-  console.error('missing env: MCP_TOKEN / FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_USER_OPEN_ID');
-  process.exit(1);
-}
-
-// 认证中间件: Bearer token 校验; 可选 X-Client-Name 头标注设备来源 (仅展示用, 非安全边界)
-function authClient(req, res, next) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  if (token !== MCP_TOKEN) return res.status(401).end();
-  req.clientName = String(req.headers['x-client-name'] ?? '').trim().slice(0, 20);
-  next();
-}
+if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) { console.error('missing env FEISHU_APP_ID/FEISHU_APP_SECRET'); process.exit(1); }
+if (!MCP_TOKEN && !oidcConfigured()) { console.error('missing env: 需要 MCP_TOKEN(单用户) 或完整 OIDC_* 配置(多用户)'); process.exit(1); }
+const MULTIUSER = oidcConfigured();
 
 // ---------- 飞书 ----------
-// FEISHU_DOMAIN=lark 时连 open.larksuite.com (国际版), 默认 feishu (国内版)
 const domain = process.env.FEISHU_DOMAIN === 'lark' ? Lark.Domain.Lark : Lark.Domain.Feishu;
 const lark = new Lark.Client({ appId: FEISHU_APP_ID, appSecret: FEISHU_APP_SECRET, domain });
 
-async function sendCard(card) {
+async function sendCard(card, openId) {
   const res = await lark.im.v1.message.create({
     params: { receive_id_type: 'open_id' },
-    data: { receive_id: FEISHU_USER_OPEN_ID, msg_type: 'interactive', content: JSON.stringify(card) },
+    data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
   });
   return res.data?.message_id;
 }
 
 function updateCard(messageId, card) {
-  return lark.im.v1.message.patch({
-    path: { message_id: messageId },
-    data: { content: JSON.stringify(card) },
-  });
+  return lark.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
 }
 
 // ---------- 飞书事件 (WSClient 长连接, 免公网) ----------
@@ -55,32 +44,49 @@ const ws = new Lark.WSClient({
 });
 await ws.start({
   eventDispatcher: new Lark.EventDispatcher({}).register({
-    // 卡片按钮点击
     'card.action.trigger': async (data) => {
       const { value } = data.action ?? {};
       if (!value?.d) return {};
       const p = pending.get(value.d);
       if (!p || !resolvePending(value.d, value.a)) return {};
       updateCard(p.messageId, resolvedCard(p.question, value.a, false, p.source)).catch(() => {});
+      logEvent(p.userId, 'solved', { via: 'button', answer: value.a, question: p.question });
       return { toast: { type: 'success', content: '已回复 agent' } };
     },
-    // 自由文本回复
     'im.message.receive_v1': async (data) => {
-      console.log('[debug] msg event:', JSON.stringify(data).slice(0, 500));
       const msg = data.message;
       if (!msg || msg.chat_type !== 'p2p') return;
       const text = msg.message_type === 'text' ? JSON.parse(msg.content)?.text?.trim() : '';
       if (!text) return;
-      const hit = matchFreeText({ parentId: msg.parent_id, text });
+      const openId = data.sender?.sender_id?.open_id;
+
+      // /bind 绑定码
+      const bindMatch = text.match(/^\/bind\s+(\d{6})$/);
+      if (bindMatch) {
+        const userId = takeBindCode(bindMatch[1]);
+        const user = userId && getUser(userId);
+        if (user) {
+          bindFeishu(user.id, openId);
+          logEvent(user.id, 'bind', { open_id: openId });
+          sendCard({ config: { wide_screen_mode: true }, header: { template: 'green', title: { tag: 'plain_text', content: '✅ 绑定成功' } }, elements: [{ tag: 'markdown', content: `账号 **${user.name}** 已绑定此飞书` }] }, openId).catch(() => {});
+        } else {
+          sendCard({ config: { wide_screen_mode: true }, header: { template: 'red', title: { tag: 'plain_text', content: '❌ 绑定码无效或已过期' } }, elements: [{ tag: 'markdown', content: '请到网页重新生成绑定码 (10 分钟内有效)' }] }, openId).catch(() => {});
+        }
+        return;
+      }
+
+      // 按发信人路由: open_id → user
+      const user = MULTIUSER ? getUserByOpenId(openId) : null;
+      const hit = user && matchFreeText({ userId: user.id, parentId: msg.parent_id, text });
       if (hit) {
         updateCard(hit.p.messageId, resolvedCard(hit.p.question, text, false, hit.p.source)).catch(() => {});
-      } else if (pending.size) {
-        // 没匹配上但确实有待回复的问题 — 提示用户, 否则 agent 干等
-        await sendCard({
+        logEvent(user.id, 'solved', { via: 'text', answer: text, question: hit.p.question });
+      } else if (user && pendingForUser(user.id).length) {
+        sendCard({
           config: { wide_screen_mode: true },
           header: { template: 'red', title: { tag: 'plain_text', content: '⚠️ 没有匹配到待回复的问题' } },
-          elements: [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pending.size} 个待回复问题。请**长按引用**对应的消息再回复。` }],
-        }).catch(() => {});
+          elements: [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pendingForUser(user.id).length} 个待回复问题。请**长按引用**对应的消息再回复。` }],
+        }, openId).catch(() => {});
       }
     },
   }),
@@ -88,9 +94,9 @@ await ws.start({
 console.log('feishu ws connected');
 
 // ---------- MCP ----------
-// ponytail: stateless 模式每次请求新建 McpServer+transport(SDK 不允许实例复用); 要会话保持再改有状态模式
-function newMcpServer(clientName = '') {
-  const mcp = new McpServer({ name: 'agent-remote', version: '0.1.0' });
+// 每请求新建 (stateless): user/clientName 走闭包, MCP SDK handler 拿不到请求上下文
+function newMcpServer(user, clientName = '') {
+  const mcp = new McpServer({ name: 'agent-remote', version: '0.2.0' });
   mcp.tool(
     'ask_user',
     '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。options 提供候选项时用户可一键点选; 不提供则等待自由文本(用户需引用该消息回复)。超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
@@ -100,20 +106,23 @@ function newMcpServer(clientName = '') {
       timeout_minutes: z.number().int().min(1).max(120).default(10).describe('等待用户回复的超时分钟数'),
     },
     async ({ question, options, timeout_minutes }) => {
+      if (!user.feishu_open_id) return { content: [{ type: 'text', text: `用户 ${user.name} 尚未绑定飞书 (网页生成绑定码后在飞书发 /bind)` }], isError: true };
       let resolveFn;
       const answerPromise = new Promise((r) => { resolveFn = r; });
-      const id = createPending({ resolve: resolveFn, options, question, source: clientName, timeoutMinutes: timeout_minutes });
+      const id = createPending({ resolve: resolveFn, userId: user.id, options, question, source: clientName, timeoutMinutes: timeout_minutes });
+      logEvent(user.id, 'ask', { question, options, source: clientName });
       let messageId;
       try {
-        messageId = await sendCard(questionCard({ id, question, options, timeoutMin: timeout_minutes, source: clientName }));
+        messageId = await sendCard(questionCard({ id, question, options, timeoutMin: timeout_minutes, source: clientName }), user.feishu_open_id);
         setMessageId(id, messageId);
       } catch (e) {
-        resolvePending(id, undefined); // 发送失败, 清理 pending
+        resolvePending(id, undefined);
         return { content: [{ type: 'text', text: `发送到飞书失败: ${e.message}` }], isError: true };
       }
       const answer = await answerPromise;
       if (answer === null) {
         updateCard(messageId, resolvedCard(question, null, true, clientName)).catch(() => {});
+        logEvent(user.id, 'timeout', { question });
         return { content: [{ type: 'text', text: JSON.stringify({ timeout: true }) }] };
       }
       updateCard(messageId, resolvedCard(question, answer, false, clientName)).catch(() => {});
@@ -123,26 +132,91 @@ function newMcpServer(clientName = '') {
   return mcp;
 }
 
-// HTTP: MCP endpoint + 健康检查
+// ---------- HTTP ----------
 const app = express();
 app.use(express.json());
-app.get('/healthz', (_q, s) => s.send('ok'));
 
-app.all('/mcp', authClient, async (req, res) => {
+// token 认证: 多用户查 DB, 单用户回退 MCP_TOKEN + FEISHU_USER_OPEN_ID
+function tokenAuth(req, res, next) {
+  const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
+  const user = MULTIUSER ? getUserByToken(token) : (token === MCP_TOKEN ? { id: 'single', name: 'default', feishu_open_id: process.env.FEISHU_USER_OPEN_ID } : null);
+  if (!user) return res.status(401).end();
+  req.user = user;
+  req.clientName = String(req.headers['x-client-name'] ?? '').trim().slice(0, 20);
+  next();
+}
+
+// session 认证 (网页用)
+function sessionAuth(req, res, next) {
+  const cookie = req.headers.cookie?.match(/session=([^;]+)/)?.[1];
+  const userId = verifySession(cookie);
+  req.user = userId && getUser(userId);
+  next();
+}
+
+app.get('/healthz', (_q, s) => s.send('ok'));
+app.get('/', sessionAuth, (_q, s) => s.sendFile('index.html', { root: 'public' }));
+
+// OIDC
+const states = new Map(); // state -> expires (CSRF)
+app.get('/auth/login', async (req, res) => {
+  const state = crypto.randomBytes(16).toString('base64url');
+  states.set(state, Date.now() + 600_000);
+  res.redirect(await loginUrl(state));
+});
+app.get('/auth/callback', async (req, res) => {
+  const { code, state } = req.query;
+  if (!code || !states.get(state)) return res.status(400).send('bad state');
+  states.delete(state);
+  try {
+    const { sub, name } = await handleCallback(code);
+    const userId = upsertUser(sub, name);
+    res.setHeader('set-cookie', `session=${signSession(userId)}; Path=/; HttpOnly; Max-Age=2592000; SameSite=Lax`);
+    res.redirect('/');
+  } catch (e) {
+    res.status(500).send(`login failed: ${e.message}`);
+  }
+});
+
+// 网页 API
+app.get('/api/me', sessionAuth, (req, res) => {
+  if (!req.user) return res.status(401).json({ login: MULTIUSER ? '/auth/login' : null });
+  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: MULTIUSER, events: listEvents(req.user.id, 30) });
+});
+app.post('/api/rotate-token', sessionAuth, async (req, res) => {
+  if (!req.user) return res.status(401).end();
+  const token = rotateToken(req.user.id);
+  logEvent(req.user.id, 'token_rotated', {});
+  res.json({ token });
+});
+app.post('/api/bind-code', sessionAuth, (req, res) => {
+  if (!req.user) return res.status(401).end();
+  res.json({ code: issueBindCode(req.user.id) });
+});
+app.get('/api/token', sessionAuth, (req, res) => {
+  if (!req.user) return res.status(401).end();
+  res.json({ token: req.user.token });
+});
+
+// MCP endpoint
+app.all('/mcp', tokenAuth, async (req, res) => {
   try {
     const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await newMcpServer(req.clientName).connect(t);
+    await newMcpServer(req.user, req.clientName).connect(t);
     await t.handleRequest(req, res, req.body);
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
 });
 
-// Claude Code hook 接收端: settings.json 里配 webhook 类 hook, POST 到这里
-app.post('/claude', authClient, async (req, res) => {
+// Claude Code hook
+app.post('/claude', tokenAuth, async (req, res) => {
   const card = hookCard(req.body);
-  if (card) await sendCard(card).catch((e) => console.error('[hook] send failed:', e?.code ?? e?.msg ?? e));
-  res.json({ ok: true }); // hook 不需要返回值, 2xx 即可
+  if (card) {
+    if (req.user.feishu_open_id) await sendCard(card, req.user.feishu_open_id).catch((e) => console.error('[hook] send failed:', e?.code ?? e?.msg ?? e));
+    logEvent(req.user.id, 'hook', req.body);
+  }
+  res.json({ ok: true });
 });
 
-app.listen(PORT, () => console.log(`mcp on :${PORT}/mcp`));
+app.listen(PORT, () => console.log(`mcp on :${PORT}/mcp (multiuser=${MULTIUSER})`));
