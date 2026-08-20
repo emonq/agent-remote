@@ -105,7 +105,7 @@ export function hookCard(hook = {}) {
 // Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
 export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作为应答哨兵: 收到它 = 放行结束
 
-export function stopCard({ id, summary, timeoutMin, dir }) {
+export function stopCard({ id, summary, dir }) {
   const where = dir ? ` · ${dir}` : '';
   return {
     config: { wide_screen_mode: true },
@@ -113,9 +113,8 @@ export function stopCard({ id, summary, timeoutMin, dir }) {
     elements: [
       { tag: 'markdown', content: summary },
       { tag: 'hr' },
-      { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）' },
+      { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
       { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: STOP_DONE }, type: 'default', value: { d: id, a: STOP_DONE } }] },
-      { tag: 'markdown', content: `${timeoutMin} 分钟内不回复则自动结束` },
     ],
   };
 }

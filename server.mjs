@@ -230,7 +230,7 @@ app.all('/mcp', tokenAuth, async (req, res) => {
 });
 
 // Claude Code hook; Stop 且已绑飞书 -> 推送本轮结果并等待手机回复 (无回复放行结束, 回复作为反馈让 Claude 继续)
-const STOP_WAIT_MIN = Number(process.env.STOP_WAIT_MIN || 5); // 需小于 hook 的 timeout (Claude Code 默认 600s, 无上限可调)
+// 等待以客户端连接为准: 不设固定超时, Claude Code hook timeout 掐断连接时 close 兜底放行
 app.post('/claude', tokenAuth, async (req, res) => {
   const h = req.body;
   const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
@@ -238,13 +238,14 @@ app.post('/claude', tokenAuth, async (req, res) => {
     const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
     let resolveFn;
     const answerPromise = new Promise((r) => { resolveFn = r; });
-    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: STOP_WAIT_MIN });
+    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: 24 * 60 }); // 兜底上限, 实际由连接断开决定
     logEvent(req.user.id, 'hook', { event: 'Stop', project: dir });
+    res.on('close', () => resolvePending(id, undefined)); // 客户端超时/断开: 放行并清理 pending
     try {
-      const messageId = await sendCard(stopCard({ id, summary: question, timeoutMin: STOP_WAIT_MIN, dir }), req.user.feishu_open_id);
+      const messageId = await sendCard(stopCard({ id, summary: question, dir }), req.user.feishu_open_id);
       setMessageId(id, messageId);
       const answer = await answerPromise;
-      if (answer == null) { // 超时收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件
+      if (answer == null) { // 超时/断连收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件
         updateCard(messageId, resolvedCard(question, null, true, 'Stop hook')).catch(() => {});
         logEvent(req.user.id, 'timeout', { question: 'Stop hook 续跑' });
       }

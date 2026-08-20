@@ -101,7 +101,7 @@ claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
 
 绑定飞书后，`Stop` 会升级为交互式：Claude 本轮结果推到手机，**长按引用该消息回复**即可让 Claude 继续干（回复内容作为反馈注入，例如回复“方案 B，继续实现”）；点「✅ 到此为止」或不回复则放行结束。多项目/多会话同时挂起时请务必引用对应消息，避免回复串台。
 
-等待时长用 `STOP_WAIT_MIN` 调（默认 5 分钟）。Claude Code hook 的 `timeout` 默认 600 秒且**无上限**，等待要超过 10 分钟时给 hook 配置加大它，例如等 30 分钟：
+等待时长只有一个旋钮：Claude Code hook 的 `timeout`（默认 600 秒，**无上限**）。服务端不设固定超时——客户端到时掐断连接，服务端感知到即放行结束。想等 30 分钟就配：
 
 ```json
 { "type": "http", "url": "http://127.0.0.1:3000/claude", "timeout": 1800, "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }
