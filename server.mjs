@@ -6,7 +6,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, mkCard, issueBindCode, takeBindCode } from './core.mjs';
 import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, unbindFeishu, logEvent, listEvents } from './db.mjs';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
@@ -69,9 +69,9 @@ await ws.start({
         if (user) {
           bindFeishu(user.id, openId);
           logEvent(user.id, 'bind', { open_id: openId });
-          sendCard({ config: { wide_screen_mode: true }, header: { template: 'green', title: { tag: 'plain_text', content: '✅ 绑定成功' } }, elements: [{ tag: 'markdown', content: `账号 **${user.name}** 已绑定此飞书` }] }, openId).catch(() => {});
+          sendCard(mkCard('green', '✅ 绑定成功', [{ tag: 'markdown', content: `账号 **${user.name}** 已绑定此飞书` }]), openId).catch(() => {});
         } else {
-          sendCard({ config: { wide_screen_mode: true }, header: { template: 'red', title: { tag: 'plain_text', content: '❌ 绑定码无效或已过期' } }, elements: [{ tag: 'markdown', content: '请到网页重新生成绑定码 (10 分钟内有效)' }] }, openId).catch(() => {});
+          sendCard(mkCard('red', '❌ 绑定码无效或已过期', [{ tag: 'markdown', content: '请到网页重新生成绑定码 (10 分钟内有效)' }]), openId).catch(() => {});
         }
         return;
       }
@@ -83,11 +83,7 @@ await ws.start({
         updateCard(hit.p.messageId, resolvedCard(hit.p.question, text, false, hit.p.source)).catch(() => {});
         logEvent(user.id, 'solved', { via: 'text', answer: text, question: hit.p.question });
       } else if (user && pendingForUser(user.id).length) {
-        sendCard({
-          config: { wide_screen_mode: true },
-          header: { template: 'red', title: { tag: 'plain_text', content: '⚠️ 没有匹配到待回复的问题' } },
-          elements: [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pendingForUser(user.id).length} 个待回复问题。请**长按引用**对应的消息再回复。` }],
-        }, openId).catch(() => {});
+        sendCard(mkCard('red', '⚠️ 没有匹配到待回复的问题', [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pendingForUser(user.id).length} 个待回复问题。请**长按引用**对应的消息再回复。` }]), openId).catch(() => {});
       }
     },
   }),

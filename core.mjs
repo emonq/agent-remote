@@ -49,40 +49,39 @@ export function matchFreeText({ userId, parentId, text }) {
   return null;
 }
 
+// CardKit 2.0 卡片骨架: 行内代码等 markdown 扩展只在 2.0 结构支持; 1.0 已全线弃用
+export const mkCard = (template, title, elements) => ({
+  schema: '2.0',
+  header: { template, title: { tag: 'plain_text', content: title } },
+  body: { elements },
+});
+
+// 2.0 按钮走 behaviors.callback, 回调事件里仍是 data.action.value
+export const mkBtn = (label, value, primary = false) => ({
+  tag: 'button',
+  text: { tag: 'plain_text', content: label },
+  type: primary ? 'primary' : 'default',
+  behaviors: [{ type: 'callback', value }],
+});
+
 export function questionCard({ id, question, options, timeoutMin, source }) {
   const elements = [{ tag: 'markdown', content: question }, { tag: 'hr' }];
   if (options?.length) {
-    elements.push({
-      tag: 'action',
-      actions: options.map((label, i) => ({
-        tag: 'button',
-        text: { tag: 'plain_text', content: label },
-        type: i === 0 ? 'primary' : 'default',
-        value: { d: id, a: label },
-      })),
-    });
+    elements.push({ tag: 'action', actions: options.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)) });
   } else {
     elements.push({ tag: 'markdown', content: '*长按引用本条消息回复你的答案*' });
   }
   const title = `🤖 ${source ? `${source} 需要你的决策` : 'Agent 需要你的决策'}`;
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: title } },
-    elements,
-  };
+  return mkCard('orange', title, elements);
 }
 
 export function resolvedCard(question, answer, timedOut, source) {
   const title = timedOut ? '⏰ 已超时' : '✅ 已回复';
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: timedOut ? 'grey' : 'green', title: { tag: 'plain_text', content: source ? `${title} · ${source}` : title } },
-    elements: [
-      { tag: 'markdown', content: question },
-      { tag: 'hr' },
-      { tag: 'markdown', content: answer ? `**你的回答:** ${answer}` : '_未回复，已超时_' },
-    ],
-  };
+  return mkCard(timedOut ? 'grey' : 'green', source ? `${title} · ${source}` : title, [
+    { tag: 'markdown', content: question },
+    { tag: 'hr' },
+    { tag: 'markdown', content: answer ? `**你的回答:** ${answer}` : '_未回复，已超时_' },
+  ]);
 }
 
 // Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
@@ -95,11 +94,7 @@ export function hookCard(hook = {}) {
     SessionEnd: { icon: '👋', title: '会话结束', color: 'grey', body: `会话已结束 (${hook.reason || 'exit'})` },
   }[hook.hook_event_name];
   if (!m) return null;
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: m.color, title: { tag: 'plain_text', content: `${m.icon} ${m.title}${where}` } },
-    elements: [{ tag: 'markdown', content: m.body }],
-  };
+  return mkCard(m.color, `${m.icon} ${m.title}${where}`, [{ tag: 'markdown', content: m.body }]);
 }
 
 // Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
@@ -107,16 +102,12 @@ export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作
 
 export function stopCard({ id, summary, dir }) {
   const where = dir ? ` · ${dir}` : '';
-  return {
-    config: { wide_screen_mode: true },
-    header: { template: 'green', title: { tag: 'plain_text', content: `✅ 任务完成${where}` } },
-    elements: [
-      { tag: 'markdown', content: summary },
-      { tag: 'hr' },
-      { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
-      { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: STOP_DONE }, type: 'default', value: { d: id, a: STOP_DONE } }] },
-    ],
-  };
+  return mkCard('green', `✅ 任务完成${where}`, [
+    { tag: 'markdown', content: summary },
+    { tag: 'hr' },
+    { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
+    { tag: 'action', actions: [mkBtn(STOP_DONE, { d: id, a: STOP_DONE })] },
+  ]);
 }
 
 // Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败/点结束) -> 放行结束

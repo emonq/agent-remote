@@ -59,14 +59,15 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   resolvePending(id, 'clean'); // 清理
 }
 
-// 6. 卡片构造: 按钮 value 带 decisionId
+// 6. 卡片构造: 2.0 结构, 按钮 callback value 带 decisionId
 {
   const card = questionCard({ id: 'D-abc123', question: '部署到生产?', options: ['是', '否'], timeoutMin: 10 });
-  const actions = card.elements.find((e) => e.tag === 'action').actions;
-  assert.equal(actions[0].value.d, 'D-abc123');
-  assert.equal(actions[0].value.a, '是');
+  assert.equal(card.schema, '2.0', 'CardKit 2.0 结构');
+  const actions = card.body.elements.find((e) => e.tag === 'action').actions;
+  assert.equal(actions[0].behaviors[0].value.d, 'D-abc123');
+  assert.equal(actions[0].behaviors[0].value.a, '是');
   const noOpt = questionCard({ id: 'D-x', question: 'Q', options: undefined, timeoutMin: 5 });
-  assert.ok(noOpt.elements.some((e) => e.tag === 'markdown' && /回复/.test(e.content)));
+  assert.ok(noOpt.body.elements.some((e) => e.tag === 'markdown' && /回复/.test(e.content)));
   const done = resolvedCard('Q', '是', false);
   assert.equal(done.header.template, 'green');
   assert.equal(resolvedCard('Q', null, true).header.template, 'grey');
@@ -78,9 +79,9 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.equal(stop.header.template, 'green');
   assert.ok(/myproj/.test(stop.header.title.content), '标题带项目目录名');
   assert.equal(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).header.template, 'orange');
-  assert.ok(/需要权限确认/.test(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).elements[0].content));
+  assert.ok(/需要权限确认/.test(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).body.elements[0].content));
   assert.equal(hookCard({ hook_event_name: 'SessionEnd' }).header.template, 'grey');
-  assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).elements[0].content));
+  assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).body.elements[0].content));
   assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
   assert.equal(hookCard({}), null);
 }
@@ -109,20 +110,20 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
 {
   const card = questionCard({ id: 'abcd1234-xxxx', question: 'Q', options: null, timeoutMin: 5, source: 'work-laptop' });
   assert.ok(/work-laptop/.test(card.header.title.content));
-  assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
+  assert.ok(card.body.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
   const done = resolvedCard('Q', 'ok', false, 'ci-runner');
   assert.ok(/ci-runner/.test(done.header.title.content));
 }
 
 // 9b. Stop hook: 卡片带结果/引用提示/结束按钮, 应答格式
 {
-  const card = stopCard({ id: 'D-stop1', summary: '重构完成', timeoutMin: 5, dir: 'myproj' });
+  const card = stopCard({ id: 'D-stop1', summary: '重构完成', dir: 'myproj' });
   assert.ok(/myproj/.test(card.header.title.content));
-  assert.ok(/重构完成/.test(card.elements[0].content));
-  assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
-  const btn = card.elements.find((e) => e.tag === 'action').actions[0];
-  assert.equal(btn.value.d, 'D-stop1');
-  assert.equal(btn.value.a, '✅ 到此为止');
+  assert.ok(/重构完成/.test(card.body.elements[0].content));
+  assert.ok(card.body.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
+  const btn = card.body.elements.find((e) => e.tag === 'action').actions[0];
+  assert.equal(btn.behaviors[0].value.d, 'D-stop1');
+  assert.equal(btn.behaviors[0].value.a, '✅ 到此为止');
   assert.deepEqual(stopHookResponse(null), { ok: true }, '无回复放行结束');
   assert.deepEqual(stopHookResponse('✅ 到此为止'), { ok: true }, '点结束按钮放行, 不等超时');
   assert.deepEqual(stopHookResponse("方案 B"), {
