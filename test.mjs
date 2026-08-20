@@ -114,13 +114,17 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.ok(/ci-runner/.test(done.header.title.content));
 }
 
-// 9b. Stop hook: 卡片带结果与引用提示, 应答格式
+// 9b. Stop hook: 卡片带结果/引用提示/结束按钮, 应答格式
 {
-  const card = stopCard({ summary: '重构完成', timeoutMin: 5, dir: 'myproj' });
+  const card = stopCard({ id: 'D-stop1', summary: '重构完成', timeoutMin: 5, dir: 'myproj' });
   assert.ok(/myproj/.test(card.header.title.content));
   assert.ok(/重构完成/.test(card.elements[0].content));
   assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
+  const btn = card.elements.find((e) => e.tag === 'action').actions[0];
+  assert.equal(btn.value.d, 'D-stop1');
+  assert.equal(btn.value.a, '✅ 到此为止');
   assert.deepEqual(stopHookResponse(null), { ok: true }, '无回复放行结束');
+  assert.deepEqual(stopHookResponse('✅ 到此为止'), { ok: true }, '点结束按钮放行, 不等超时');
   assert.deepEqual(stopHookResponse('方案 B'), {
     hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '用户从手机回复：方案 B' },
   });

@@ -33,7 +33,7 @@ export function setMessageId(id, messageId) {
 export const pendingForUser = (userId) => [...pending.values()].filter((p) => p.userId === userId);
 
 // 自由文本匹配:
-// 1. 引用回复(parent_id) 精确匹配
+// 1. 引用回复(parent_id) 精确匹配 (跨用户也按 messageId 唯一定位, 无越权: 卡片只发到本人私聊)
 // 2. 该用户仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
 export function matchFreeText({ userId, parentId, text }) {
   if (parentId) {
@@ -43,9 +43,8 @@ export function matchFreeText({ userId, parentId, text }) {
   }
   const open = pendingForUser(userId).filter((p) => !p.options?.length);
   if (open.length === 1) {
-    const p = open[0];
-    const id = [...pending.entries()].find(([, v]) => v === p)?.[0];
-    if (id && resolvePending(id, text)) return { id, p };
+    const id = [...pending.entries()].find(([, v]) => v === open[0])?.[0];
+    if (id && resolvePending(id, text)) return { id, p: open[0] };
   }
   return null;
 }
@@ -104,7 +103,9 @@ export function hookCard(hook = {}) {
 }
 
 // Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
-export function stopCard({ summary, timeoutMin, dir }) {
+export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作为应答哨兵: 收到它 = 放行结束
+
+export function stopCard({ id, summary, timeoutMin, dir }) {
   const where = dir ? ` · ${dir}` : '';
   return {
     config: { wide_screen_mode: true },
@@ -112,13 +113,15 @@ export function stopCard({ summary, timeoutMin, dir }) {
     elements: [
       { tag: 'markdown', content: summary },
       { tag: 'hr' },
-      { tag: 'markdown', content: `**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；${timeoutMin} 分钟内不回复则自动结束` },
+      { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）' },
+      { tag: 'action', actions: [{ tag: 'button', text: { tag: 'plain_text', content: STOP_DONE }, type: 'default', value: { d: id, a: STOP_DONE } }] },
+      { tag: 'markdown', content: `${timeoutMin} 分钟内不回复则自动结束` },
     ],
   };
 }
 
-// Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败) -> 放行结束
-export const stopHookResponse = (answer) => (answer == null
+// Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败/点结束) -> 放行结束
+export const stopHookResponse = (answer) => (answer == null || answer === STOP_DONE
   ? { ok: true }
   : { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: `用户从手机回复：${answer}` } });
 
