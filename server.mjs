@@ -76,6 +76,7 @@ await ws.start({
     },
     // 自由文本回复
     'im.message.receive_v1': async (data) => {
+      console.log('[debug] msg event:', JSON.stringify(data).slice(0, 500));
       const msg = data.message;
       if (!msg || msg.chat_type !== 'p2p') return;
       const text = msg.message_type === 'text' ? JSON.parse(msg.content)?.text?.trim() : '';
