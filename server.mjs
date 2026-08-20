@@ -54,6 +54,7 @@ await ws.start({
       return { toast: { type: 'success', content: '已回复 agent' } };
     },
     'im.message.receive_v1': async (data) => {
+      console.log('[debug] msg event:', JSON.stringify(data).slice(0, 400));
       const msg = data.message;
       if (!msg || msg.chat_type !== 'p2p') return;
       const text = msg.message_type === 'text' ? JSON.parse(msg.content)?.text?.trim() : '';
@@ -227,7 +228,10 @@ app.post('/claude', tokenAuth, async (req, res) => {
   const card = hookCard(req.body);
   if (card) {
     if (req.user.feishu_open_id) await sendCard(card, req.user.feishu_open_id).catch((e) => console.error('[hook] send failed:', e?.code ?? e?.msg ?? e));
-    logEvent(req.user.id, 'hook', req.body);
+    // 只存摘要: Stop/SessionEnd 没有 message 字段, 原样存 UI 没东西可显示
+    const h = req.body;
+    const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+    logEvent(req.user.id, 'hook', { event: h.hook_event_name, message: h.message || '', project: dir });
   }
   res.json({ ok: true });
 });

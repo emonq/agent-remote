@@ -158,9 +158,10 @@ async function main() {
   const events = me.events || [];
   for (const e of events) {
     const p = JSON.parse(e.payload);
-    // 提问/超时/hook 显示问题或消息; 已回复显示 问题 → 答案
-    let detail = p.question ?? p.message ?? '';
+    // 提问/超时显示问题; 已回复显示 问题 → 答案; hook 显示 消息+项目
+    let detail = p.question ?? '';
     if (e.type === 'solved' && p.question) detail = p.answer != null ? `${p.question} → ${p.answer}` : p.question;
+    if (e.type === 'hook') detail = [p.message, p.project].filter(Boolean).join(' · ') || p.event || '';
     rows.append($(`<tr><td class="muted" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</td>
       <td><span class="tag ${esc(e.type)}">${typeZh[e.type] || esc(e.type)}</span></td>
       <td><div class="clip" title="${esc(detail)}">${esc(String(detail))}</div></td></tr>`));
