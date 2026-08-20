@@ -7,7 +7,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
-import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, logEvent, listEvents } from './db.mjs';
+import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, unbindFeishu, logEvent, listEvents } from './db.mjs';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
 const {
@@ -206,6 +206,12 @@ app.post('/api/rotate-token', sessionAuth, async (req, res) => {
 app.post('/api/bind-code', sessionAuth, (req, res) => {
   if (!req.user) return res.status(401).end();
   res.json({ code: issueBindCode(req.user.id) });
+});
+app.post('/api/unbind', sessionAuth, (req, res) => {
+  if (!req.user) return res.status(401).end();
+  unbindFeishu(req.user.id);
+  logEvent(req.user.id, 'unbind', {});
+  res.json({ ok: true });
 });
 app.get('/api/token', sessionAuth, (req, res) => {
   if (!req.user) return res.status(401).end();

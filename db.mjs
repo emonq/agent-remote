@@ -55,6 +55,9 @@ export function bindFeishu(userId, openId) {
   db.prepare('UPDATE users SET feishu_open_id = ? WHERE id = ?').run(openId, userId);
 }
 
+export const unbindFeishu = (userId) =>
+  db.prepare('UPDATE users SET feishu_open_id = NULL WHERE id = ?').run(userId);
+
 export const logEvent = (userId, type, payload = {}) =>
   db.prepare('INSERT INTO events (user_id, type, payload, created_at) VALUES (?,?,?,?)')
     .run(userId, type, JSON.stringify(payload), now());

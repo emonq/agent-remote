@@ -113,21 +113,29 @@ async function main() {
         </div>
       </div>`));
 
-  // 飞书绑定
-  const bindCard = $('<div class="card"><h2>飞书绑定</h2><div class="bind"></div></div>');
-  app.append(bindCard);
-  const renderBind = (code) => {
-    const el = bindCard.querySelector('.bind');
-    el.innerHTML = code
-      ? `<div class="row"><div>在飞书给机器人发&nbsp;<code>/bind ${esc(code)}</code></div><button id="bind" class="primary">重新生成</button></div>
-         <div class="muted" style="margin-top:.4rem">10 分钟内有效，发送后自动完成绑定</div>`
-      : `<div class="row"><div class="muted">生成绑定码，在飞书发送即可绑定你的账号</div><button id="bind" class="primary">生成绑定码</button></div>`;
-    el.querySelector('#bind').onclick = async () => {
-      el.innerHTML = '<div class="muted">生成中…</div>';
-      renderBind((await fetch('/api/bind-code', { method: 'POST' }).then((r) => r.json())).code);
+    // 飞书绑定: 未绑定→生成绑定码; 已绑定→解绑
+    const bindCard = $('<div class="card"><h2>飞书绑定</h2><div class="bind"></div></div>');
+    app.append(bindCard);
+    const renderBind = (bound) => {
+      const el = bindCard.querySelector('.bind');
+      if (bound) {
+        el.innerHTML = `<div class="row"><div><span class="chip ok">✓ 已绑定</span> <span class="muted">决策消息会推送到你的飞书</span></div>
+          <button id="unbind" class="danger">解绑</button></div>`;
+        el.querySelector('#unbind').onclick = async () => {
+          if (!confirm('解绑后 agent 的提问将无法推送给你，继续？')) return;
+          await fetch('/api/unbind', { method: 'POST' });
+          location.reload();
+        };
+        return;
+      }
+      el.innerHTML = `<div class="row"><div class="muted">生成绑定码，在飞书给机器人发送即可绑定你的账号</div><button id="bind" class="primary">生成绑定码</button></div>`;
+      el.querySelector('#bind').onclick = async () => {
+        const code = (await fetch('/api/bind-code', { method: 'POST' }).then((r) => r.json())).code;
+        el.innerHTML = `<div>在飞书给机器人发&nbsp;<code>/bind ${esc(code)}</code></div>
+           <div class="muted" style="margin-top:.4rem">10 分钟内有效，发送后自动完成绑定 — <a href="/" onclick="location.reload();return false">刷新页面查看绑定状态</a></div>`;
+      };
     };
-  };
-  renderBind();
+    renderBind(me.bound);
 
   // token
   const tokenCard = $('<div class="card"><h2>API Token</h2><div class="tok"></div></div>');
