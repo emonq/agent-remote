@@ -76,37 +76,34 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
   assert.equal(hookCard({}), null);
 }
 
-// 8. #tag 路由: 精确匹配 decisionId 前缀, 多路并发时不猜
+// 8. 引用回复精确路由 + 并发不猜
 {
   const answers = {};
   const a = createPending({ resolve: (v) => { answers.a = v; }, options: null, question: 'A?', source: 'work-laptop', timeoutMinutes: 1 });
+  setMessageId(a, 'om_a');
   const b = createPending({ resolve: (v) => { answers.b = v; }, options: null, question: 'B?', source: 'ci-runner', timeoutMinutes: 1 });
+  setMessageId(b, 'om_b');
 
-  // tag 命中 b
-  const hit = matchFreeText({ parentId: null, text: `#${b.slice(0, 4)} 用方案B` });
+  // 两条并行: 无引用不猜
+  assert.equal(matchFreeText({ parentId: null, text: '无引用并行两条' }), null, '两条并行无引用不猜');
+
+  // 引用 b 命中 b, a 不受影响
+  const hit = matchFreeText({ parentId: 'om_b', text: '用方案B' });
   assert.equal(hit.id, b);
-  assert.equal(answers.b, '用方案B', 'tag 前缀被剥掉');
+  assert.equal(answers.b, '用方案B');
   assert.equal(answers.a, undefined, 'a 未被误伤');
 
-  // 只剩 a 一条, 无 tag 直接命中
+  // 只剩 a 一条, 无引用兜底命中
   const hit2 = matchFreeText({ parentId: null, text: '就这样' });
   assert.equal(hit2.id, a);
   assert.equal(answers.a, '就这样');
-
-  // 错误 tag: 不落兜底
-  const c = createPending({ resolve: (v) => { answers.c = v; }, options: null, question: 'C?', timeoutMinutes: 1 });
-  const d = createPending({ resolve: (v) => { answers.d = v; }, options: null, question: 'D?', timeoutMinutes: 1 });
-  assert.equal(matchFreeText({ parentId: null, text: '#zzzz 随便' }), null);
-  assert.equal(matchFreeText({ parentId: null, text: '无tag并行两条' }), null, '两条无tag并行不猜');
-  resolvePending(c, 'x'); resolvePending(d, 'y');
 }
 
-// 9. 卡片带来源和 tag
+// 9. 卡片带来源, 开放性问题提示引用回复
 {
   const card = questionCard({ id: 'abcd1234-xxxx', question: 'Q', options: null, timeoutMin: 5, source: 'work-laptop' });
   assert.ok(/work-laptop/.test(card.header.title.content));
-  assert.ok(/#abcd/.test(card.elements.find((e) => e.tag === 'markdown' && e.content?.includes('#'))?.content || ''), '正文含回复指引');
-  assert.ok(/#abcd/.test(card.elements.at(-1).elements[0].content), 'note 含 tag');
+  assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
   const done = resolvedCard('Q', 'ok', false, 'ci-runner');
   assert.ok(/ci-runner/.test(done.header.title.content));
 }

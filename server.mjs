@@ -88,7 +88,7 @@ await ws.start({
         await sendCard({
           config: { wide_screen_mode: true },
           header: { template: 'red', title: { tag: 'plain_text', content: '⚠️ 没有匹配到待回复的问题' } },
-          elements: [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pending.size} 个待回复问题。请**引用**对应消息回复, 或带上消息里的 \`#tag\` 前缀重发。` }],
+          elements: [{ tag: 'markdown', content: `你发了: ${text}\n\n当前有 ${pending.size} 个待回复问题。请**长按引用**对应的消息再回复。` }],
         }).catch(() => {});
       }
     },
@@ -102,7 +102,7 @@ function newMcpServer(clientName = '') {
   const mcp = new McpServer({ name: 'agent-remote', version: '0.1.0' });
   mcp.tool(
     'ask_user',
-    '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。options 提供候选项时用户可一键点选; 不提供则等待自由文本(回复时带上消息里的 #tag, 或引用该消息回复)。超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
+    '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。options 提供候选项时用户可一键点选; 不提供则等待自由文本(用户需引用该消息回复)。超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
     {
       question: z.string().describe('要问的问题, 写清楚上下文和推荐选项'),
       options: z.array(z.string()).max(6).optional().describe('候选项, 建议不超过 4 个; 开放性问题(需要用户输入文字)不要传此参数'),

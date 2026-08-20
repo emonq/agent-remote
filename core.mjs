@@ -29,19 +29,10 @@ export function setMessageId(id, messageId) {
   if (p) p.messageId = messageId;
 }
 
-// 自由文本匹配, 三级优先:
-// 1. "#tag 回复内容" — tag 是 decisionId 前 4 位, 卡片 note 里展示, 精确路由
-// 2. 引用回复(parent_id) 精确匹配
-// 3. 仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
+// 自由文本匹配:
+// 1. 引用回复(parent_id) 精确匹配
+// 2. 仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
 export function matchFreeText({ parentId, text }) {
-  const tagMatch = text.match(/^#([0-9a-f]{4})\b/i);
-  if (tagMatch) {
-    for (const [id, p] of pending) {
-      if (id.startsWith(tagMatch[1].toLowerCase()) && resolvePending(id, text.replace(/^#[0-9a-f]{4}\s*/i, '')))
-        return { id, p };
-    }
-    return null; // 带 tag 但没匹配上, 不落兜底
-  }
   if (parentId) {
     for (const [id, p] of pending) {
       if (p.messageId === parentId && resolvePending(id, text)) return { id, p };
@@ -68,13 +59,13 @@ export function questionCard({ id, question, options, timeoutMin, source }) {
       })),
     });
   } else {
-    elements.push({ tag: 'markdown', content: `*回复 \`#${id.slice(0, 4)} 你的答案\` (或直接引用本条消息回复)*` });
+    elements.push({ tag: 'markdown', content: '*长按引用本条消息回复你的答案*' });
   }
   const title = `🤖 ${source ? `${source} 需要你的决策` : 'Agent 需要你的决策'}`;
   return {
     config: { wide_screen_mode: true },
     header: { template: 'orange', title: { tag: 'plain_text', content: title } },
-    elements: [...elements, { tag: 'note', elements: [{ tag: 'plain_text', content: `超时: ${timeoutMin} 分钟 | #${id.slice(0, 4)}` }] }],
+    elements,
   };
 }
 
