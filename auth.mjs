@@ -48,12 +48,18 @@ export function loginUrl(state) {
 
 export const handleCallback = exchangeCode;
 
-// ---- session cookie: userId.expiry.hmac ----
+// ---- session cookie: userId.expiry.version.hmac ----
 const sessionKey = () => process.env.SESSION_SECRET || 'ponytail: dev 默认, 生产必换';
+
+// 无状态 cookie 无法服务端注销 — 用递增版本号: bump 后旧 cookie 全部失效 (内存, 重启即全部失效, 可接受)
+const sessionVersions = new Map(); // userId -> version
+export function bumpSessionVersion(userId) { sessionVersions.set(userId, (sessionVersions.get(userId) ?? 0) + 1); }
+export function currentSessionVersion(userId) { return sessionVersions.get(userId) ?? 0; }
 
 export function signSession(userId, days = 30) {
   const exp = Date.now() + days * 86400_000;
-  const body = `${userId}.${exp}`;
+  const v = currentSessionVersion(userId);
+  const body = `${userId}.${exp}.${v}`;
   const mac = crypto.createHmac('sha256', sessionKey()).update(body).digest('base64url');
   return `${body}.${mac}`;
 }
@@ -61,10 +67,11 @@ export function signSession(userId, days = 30) {
 export function verifySession(cookie) {
   if (!cookie) return null;
   const parts = cookie.split('.');
-  if (parts.length !== 3) return null;
-  const [userId, exp, mac] = parts;
-  const expect = crypto.createHmac('sha256', sessionKey()).update(`${userId}.${exp}`).digest('base64url');
+  if (parts.length !== 4) return null;
+  const [userId, exp, v, mac] = parts;
+  const expect = crypto.createHmac('sha256', sessionKey()).update(`${userId}.${exp}.${v}`).digest('base64url');
   if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
   if (Number(exp) < Date.now()) return null;
+  if (Number(v) !== currentSessionVersion(userId)) return null; // 已注销
   return userId;
 }

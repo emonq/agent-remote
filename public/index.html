@@ -68,10 +68,11 @@
 <div class="wrap">
   <header>
     <div class="logo">🤖</div>
-    <div>
+    <div style="flex:1">
       <h1>agent-remote</h1>
       <div class="sub">把 agent 的决策问题推到你的飞书</div>
     </div>
+    <button id="logout" style="display:none" class="muted">退出</button>
   </header>
   <div id="app"><div class="empty muted">加载中…</div></div>
 </div>
@@ -95,6 +96,11 @@ async function main() {
 
   // 单用户模式: 没有账号体系, 只展示事件 (token 在 .env 里)
   if (!me.single) {
+    document.getElementById('logout').style.display = '';
+    document.getElementById('logout').onclick = async () => {
+      await fetch('/auth/logout', { method: 'POST' });
+      location.reload();
+    };
     // 账号
     app.append($(`
       <div class="card">
@@ -126,11 +132,13 @@ async function main() {
   // token
   const tokenCard = $('<div class="card"><h2>API Token</h2><div class="tok"></div></div>');
   app.append(tokenCard);
-  const renderToken = (t) => {
+  // token: 默认打码, 可显示/复制/重置
+  const renderToken = (t, shown = false) => {
     const el = tokenCard.querySelector('.tok');
-    el.innerHTML = `<div class="row"><span class="token">${esc(t)}</span>
-        <span><button id="copy">复制</button> <button id="rot" class="danger">重置</button></span></div>
+    el.innerHTML = `<div class="row"><span class="token">${esc(shown ? t : t.slice(0, 6) + '••••••••••••••••')}</span>
+        <span><button id="toggle">${shown ? '隐藏' : '显示'}</button> <button id="copy">复制</button> <button id="rot" class="danger">重置</button></span></div>
       <div class="muted" style="margin-top:.4rem">用于 MCP / hook 的 Bearer 认证，重置后旧 token 立即失效</div>`;
+    el.querySelector('#toggle').onclick = () => renderToken(t, !shown);
     el.querySelector('#copy').onclick = () => navigator.clipboard.writeText(t);
     el.querySelector('#rot').onclick = async () => {
       if (!confirm('重置后所有使用旧 token 的客户端都会失效，继续？')) return;

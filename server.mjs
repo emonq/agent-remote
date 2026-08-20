@@ -8,7 +8,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
 import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, logEvent, listEvents } from './db.mjs';
-import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession } from './auth.mjs';
+import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
 const {
   MCP_TOKEN,            // 未配 SSO 时的单用户 token (兼容旧部署)
@@ -176,6 +176,13 @@ app.get('/auth/callback', async (req, res) => {
   } catch (e) {
     res.status(500).send(`login failed: ${e.message}`);
   }
+});
+
+// 注销: 清 cookie + 使该用户所有 session 失效
+app.post('/auth/logout', sessionAuth, (req, res) => {
+  if (req.user) bumpSessionVersion(req.user.id);
+  res.setHeader('set-cookie', 'session=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax');
+  res.json({ ok: true });
 });
 
 // 网页 API
