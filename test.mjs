@@ -72,13 +72,14 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.equal(resolvedCard('Q', null, true).header.template, 'grey');
 }
 
-// 7. hook 事件: 只认 Stop/Notification/SessionEnd, 其余忽略
+// 7. hook 事件: 只认 Stop/Notification/SessionEnd, 各自配色, 其余忽略
 {
   const stop = hookCard({ hook_event_name: 'Stop', cwd: '/home/u/myproj' });
-  assert.equal(stop.header.template, 'blue');
+  assert.equal(stop.header.template, 'green');
   assert.ok(/myproj/.test(stop.header.title.content), '标题带项目目录名');
-  const note = hookCard({ hook_event_name: 'Notification', message: '需要权限确认' });
-  assert.ok(/需要权限确认/.test(note.elements[0].content));
+  assert.equal(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).header.template, 'orange');
+  assert.ok(/需要权限确认/.test(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).elements[0].content));
+  assert.equal(hookCard({ hook_event_name: 'SessionEnd' }).header.template, 'grey');
   assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).elements[0].content));
   assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
   assert.equal(hookCard({}), null);
