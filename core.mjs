@@ -123,7 +123,7 @@ export function stopCard({ id, summary, timeoutMin, dir }) {
 // Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败/点结束) -> 放行结束
 export const stopHookResponse = (answer) => (answer == null || answer === STOP_DONE
   ? { ok: true }
-  : { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: `用户从手机回复：${answer}` } });
+  : { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: `用户回复：${answer}` } });
 
 // 飞书绑定码: 6 位数字, 10 分钟有效, 内存即可 (重启丢的是未完成的绑定, 无害)
 const bindCodes = new Map(); // code -> { userId, expires }

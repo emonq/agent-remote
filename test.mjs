@@ -125,8 +125,11 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.equal(btn.value.a, '✅ 到此为止');
   assert.deepEqual(stopHookResponse(null), { ok: true }, '无回复放行结束');
   assert.deepEqual(stopHookResponse('✅ 到此为止'), { ok: true }, '点结束按钮放行, 不等超时');
-  assert.deepEqual(stopHookResponse('方案 B'), {
-    hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '用户从手机回复：方案 B' },
+  assert.deepEqual(stopHookResponse("方案 B"), {
+      hookSpecificOutput: {
+          hookEventName: "Stop",
+          additionalContext: "用户回复：方案 B",
+      },
   });
 }
 
