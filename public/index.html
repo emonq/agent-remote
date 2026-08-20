@@ -77,12 +77,14 @@
 </div>
 
 <script>
-const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild; };
+// 用 <template> 解析: tr/td 等 table 片段在 div.innerHTML 里会被浏览器丢弃
+const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h.trim(); return t.content.firstElementChild; };
 const esc = (s) => { const d = document.createElement('span'); d.textContent = s; return d.innerHTML; };
 
 async function main() {
   const me = await fetch('/api/me').then((r) => r.json()).catch(() => null);
   const app = document.getElementById('app');
+  app.innerHTML = ''; // 清掉"加载中"占位
 
   if (!me) { app.innerHTML = '<div class="card"><div class="empty">服务异常，稍后重试</div></div>'; return; }
   if (me.login) { // 未登录 → OIDC (跳转失败时给出可见提示而不是挂着"加载中")
