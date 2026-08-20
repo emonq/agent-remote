@@ -1,0 +1,122 @@
+// agent-remote: MCP 中心服务 — agent 阻塞式问用户，飞书收发
+// MCP: Streamable HTTP + Bearer token;  飞书: 官方 SDK WebSocket 长连接(免公网回调)
+import express from 'express';
+import * as Lark from '@larksuiteoapi/node-sdk';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { z } from 'zod';
+import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard } from './core.mjs';
+
+const {
+  MCP_TOKEN,            // MCP Bearer token (自定义)
+  FEISHU_APP_ID,
+  FEISHU_APP_SECRET,
+  FEISHU_USER_OPEN_ID,  // 接收决策消息的用户 (open_id, ou_ 开头)
+  PORT = 3000,
+} = process.env;
+
+for (const [k, v] of Object.entries({ MCP_TOKEN, FEISHU_APP_ID, FEISHU_APP_SECRET, FEISHU_USER_OPEN_ID }))
+  if (!v) { console.error(`missing env ${k}`); process.exit(1); }
+
+// ---------- 飞书 ----------
+// FEISHU_DOMAIN=lark 时连 open.larksuite.com (国际版), 默认 feishu (国内版)
+const domain = process.env.FEISHU_DOMAIN === 'lark' ? Lark.Domain.Lark : Lark.Domain.Feishu;
+const lark = new Lark.Client({ appId: FEISHU_APP_ID, appSecret: FEISHU_APP_SECRET, domain });
+
+async function sendCard(card) {
+  const res = await lark.im.v1.message.create({
+    params: { receive_id_type: 'open_id' },
+    data: { receive_id: FEISHU_USER_OPEN_ID, msg_type: 'interactive', content: JSON.stringify(card) },
+  });
+  return res.data?.message_id;
+}
+
+function updateCard(messageId, card) {
+  return lark.im.v1.message.patch({
+    path: { message_id: messageId },
+    data: { content: JSON.stringify(card) },
+  });
+}
+
+// ---------- 飞书事件 (WSClient 长连接, 免公网) ----------
+const ws = new Lark.WSClient({
+  appId: FEISHU_APP_ID, appSecret: FEISHU_APP_SECRET, domain,
+  onError: (e) => console.error('[feishu ws]', e?.code ?? e?.msg ?? e),
+});
+await ws.start({
+  eventDispatcher: new Lark.EventDispatcher({}).register({
+    // 卡片按钮点击
+    'card.action.trigger': async (data) => {
+      const { value } = data.action ?? {};
+      if (!value?.d) return {};
+      const p = pending.get(value.d);
+      if (!p || !resolvePending(value.d, value.a)) return {};
+      updateCard(p.messageId, resolvedCard(p.question, value.a, false)).catch(() => {});
+      return { toast: { type: 'success', content: '已回复 agent' } };
+    },
+    // 自由文本回复
+    'im.message.receive_v1': async (data) => {
+      const msg = data.message;
+      if (!msg || msg.chat_type !== 'p2p') return;
+      const text = msg.message_type === 'text' ? JSON.parse(msg.content)?.text?.trim() : '';
+      if (!text) return;
+      const hit = matchFreeText({ parentId: msg.parent_id, text });
+      if (hit) updateCard(hit.p.messageId, resolvedCard(hit.p.question, text, false)).catch(() => {});
+    },
+  }),
+});
+console.log('feishu ws connected');
+
+// ---------- MCP ----------
+// ponytail: stateless 模式每次请求新建 McpServer+transport(SDK 不允许实例复用); 要会话保持再改有状态模式
+function newMcpServer() {
+  const mcp = new McpServer({ name: 'agent-remote', version: '0.1.0' });
+  mcp.tool(
+    'ask_user',
+    '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。options 提供候选项时用户可一键点选; 不提供则等待自由文本(用户需回复对应消息)。超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
+    {
+      question: z.string().describe('要问的问题, 写清楚上下文和推荐选项'),
+      options: z.array(z.string()).max(6).optional().describe('候选项, 建议不超过 4 个'),
+      timeout_minutes: z.number().int().min(1).max(120).default(10).describe('等待用户回复的超时分钟数'),
+    },
+    async ({ question, options, timeout_minutes }) => {
+      let resolveFn;
+      const answerPromise = new Promise((r) => { resolveFn = r; });
+      const id = createPending({ resolve: resolveFn, options, question, timeoutMinutes: timeout_minutes });
+      let messageId;
+      try {
+        messageId = await sendCard(questionCard({ id, question, options, timeoutMin: timeout_minutes }));
+        setMessageId(id, messageId);
+      } catch (e) {
+        resolvePending(id, undefined); // 发送失败, 清理 pending
+        return { content: [{ type: 'text', text: `发送到飞书失败: ${e.message}` }], isError: true };
+      }
+      const answer = await answerPromise;
+      if (answer === null) {
+        updateCard(messageId, resolvedCard(question, null, true)).catch(() => {});
+        return { content: [{ type: 'text', text: JSON.stringify({ timeout: true }) }] };
+      }
+      updateCard(messageId, resolvedCard(question, answer, false)).catch(() => {});
+      return { content: [{ type: 'text', text: JSON.stringify({ answer }) }] };
+    },
+  );
+  return mcp;
+}
+
+// HTTP: MCP endpoint + 健康检查
+const app = express();
+app.use(express.json());
+app.get('/healthz', (_q, s) => s.send('ok'));
+
+app.all('/mcp', async (req, res) => {
+  if (req.headers.authorization !== `Bearer ${MCP_TOKEN}`) return res.status(401).end();
+  try {
+    const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
+    await newMcpServer().connect(t);
+    await t.handleRequest(req, res, req.body);
+  } catch (e) {
+    res.status(500).json({ error: String(e) });
+  }
+});
+
+app.listen(PORT, () => console.log(`mcp on :${PORT}/mcp`));
