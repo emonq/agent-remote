@@ -13,14 +13,14 @@ export function resolvePending(id, answer) {
 }
 
 // id 需先于卡片发送生成(按钮 value 要带), messageId 发送后才知道 — 所以两步注册
-export function createPending({ resolve, options, question, timeoutMinutes, onTimeout }) {
+export function createPending({ resolve, options, question, source, timeoutMinutes, onTimeout }) {
   const id = crypto.randomUUID();
   const timer = setTimeout(() => {
     pending.delete(id);
     onTimeout?.();
     resolve(null); // null = 超时
   }, timeoutMinutes * 60_000);
-  pending.set(id, { resolve, messageId: null, options, question, timer });
+  pending.set(id, { resolve, messageId: null, options, question, source, timer });
   return id;
 }
 
@@ -29,23 +29,33 @@ export function setMessageId(id, messageId) {
   if (p) p.messageId = messageId;
 }
 
-// 自由文本匹配: 引用回复(parent_id)精确匹配优先, 否则 LIFO 兜底取最近一条无选项 pending
+// 自由文本匹配, 三级优先:
+// 1. "#tag 回复内容" — tag 是 decisionId 前 4 位, 卡片 note 里展示, 精确路由
+// 2. 引用回复(parent_id) 精确匹配
+// 3. 仅一条无选项 pending 时直接匹配; 多条并行时不猜 (猜错会送到错误的 agent 会话)
 export function matchFreeText({ parentId, text }) {
+  const tagMatch = text.match(/^#([0-9a-f]{4})\b/i);
+  if (tagMatch) {
+    for (const [id, p] of pending) {
+      if (id.startsWith(tagMatch[1].toLowerCase()) && resolvePending(id, text.replace(/^#[0-9a-f]{4}\s*/i, '')))
+        return { id, p };
+    }
+    return null; // 带 tag 但没匹配上, 不落兜底
+  }
   if (parentId) {
     for (const [id, p] of pending) {
       if (p.messageId === parentId && resolvePending(id, text)) return { id, p };
     }
   }
-  // ponytail: 单用户 LIFO; 多并发自由文本场景改为强制引用回复
   const open = [...pending.entries()].filter(([, p]) => !p.options?.length);
-  if (open.length) {
-    const [id, p] = open[open.length - 1];
+  if (open.length === 1) {
+    const [id, p] = open[0];
     if (resolvePending(id, text)) return { id, p };
   }
   return null;
 }
 
-export function questionCard({ id, question, options, timeoutMin }) {
+export function questionCard({ id, question, options, timeoutMin, source }) {
   const elements = [{ tag: 'markdown', content: question }, { tag: 'hr' }];
   if (options?.length) {
     elements.push({
@@ -58,19 +68,21 @@ export function questionCard({ id, question, options, timeoutMin }) {
       })),
     });
   } else {
-    elements.push({ tag: 'markdown', content: '*直接回复本条消息输入你的答案*' });
+    elements.push({ tag: 'markdown', content: `*回复 \`#${id.slice(0, 4)} 你的答案\` (或直接引用本条消息回复)*` });
   }
+  const title = `🤖 ${source ? `${source} 需要你的决策` : 'Agent 需要你的决策'}`;
   return {
     config: { wide_screen_mode: true },
-    header: { template: 'orange', title: { tag: 'plain_text', content: '🤖 Agent 需要你的决策' } },
-    elements: [...elements, { tag: 'note', elements: [{ tag: 'plain_text', content: `超时: ${timeoutMin} 分钟 | #${id.slice(0, 6)}` }] }],
+    header: { template: 'orange', title: { tag: 'plain_text', content: title } },
+    elements: [...elements, { tag: 'note', elements: [{ tag: 'plain_text', content: `超时: ${timeoutMin} 分钟 | #${id.slice(0, 4)}` }] }],
   };
 }
 
-export function resolvedCard(question, answer, timedOut) {
+export function resolvedCard(question, answer, timedOut, source) {
+  const title = timedOut ? '⏰ 已超时' : '✅ 已回复';
   return {
     config: { wide_screen_mode: true },
-    header: { template: timedOut ? 'grey' : 'green', title: { tag: 'plain_text', content: timedOut ? '⏰ 已超时' : '✅ 已回复' } },
+    header: { template: timedOut ? 'grey' : 'green', title: { tag: 'plain_text', content: source ? `${title} · ${source}` : title } },
     elements: [
       { tag: 'markdown', content: question },
       { tag: 'hr' },
