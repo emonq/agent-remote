@@ -180,7 +180,13 @@ app.get('/auth/callback', async (req, res) => {
 
 // 网页 API
 app.get('/api/me', sessionAuth, (req, res) => {
-  if (!req.user) return res.status(401).json({ login: MULTIUSER ? '/auth/login' : null });
+  if (!req.user) {
+    if (!MULTIUSER) {
+      // 单用户模式: 网页只读展示, 无登录/token 管理
+      return res.json({ single: true, name: 'default', multiuser: false, events: [] });
+    }
+    return res.status(401).json({ login: '/auth/login' });
+  }
   res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: MULTIUSER, events: listEvents(req.user.id, 30) });
 });
 app.post('/api/rotate-token', sessionAuth, async (req, res) => {
