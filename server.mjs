@@ -8,33 +8,23 @@ import { z } from 'zod';
 import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard, hookCard } from './core.mjs';
 
 const {
-  MCP_TOKEN,            // MCP Bearer token (自定义); 多客户端跟踪用 CLIENT_TOKENS: "名字1:token1,名字2:token2"
-  CLIENT_TOKENS,
+  MCP_TOKEN,            // MCP Bearer token (自定义); 多设备用请求头 X-Client-Name 标注来源
   FEISHU_APP_ID,
   FEISHU_APP_SECRET,
   FEISHU_USER_OPEN_ID,  // 接收决策消息的用户 (open_id, ou_ 开头)
   PORT = 3000,
 } = process.env;
 
-if (!FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_USER_OPEN_ID || !(MCP_TOKEN || CLIENT_TOKENS)) {
-  console.error('missing env: 需要 FEISHU_APP_ID/FEISHU_APP_SECRET/FEISHU_USER_OPEN_ID 和 MCP_TOKEN(或 CLIENT_TOKENS)');
+if (!MCP_TOKEN || !FEISHU_APP_ID || !FEISHU_APP_SECRET || !FEISHU_USER_OPEN_ID) {
+  console.error('missing env: MCP_TOKEN / FEISHU_APP_ID / FEISHU_APP_SECRET / FEISHU_USER_OPEN_ID');
   process.exit(1);
 }
 
-// token -> 客户端名; CLIENT_TOKENS 的条目带名字, 裸 MCP_TOKEN 是默认客户端 (卡片不显示来源)
-const tokenClients = new Map();
-if (CLIENT_TOKENS) for (const pair of CLIENT_TOKENS.split(',')) {
-  const [name, token] = pair.split(':').map((s) => s?.trim());
-  if (name && token) tokenClients.set(token, name);
-}
-if (MCP_TOKEN && !tokenClients.has(MCP_TOKEN)) tokenClients.set(MCP_TOKEN, '');
-
-// 认证中间件: 校验 Bearer, 挂上客户端名
+// 认证中间件: Bearer token 校验; 可选 X-Client-Name 头标注设备来源 (仅展示用, 非安全边界)
 function authClient(req, res, next) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  const name = tokenClients.get(token);
-  if (name === undefined) return res.status(401).end();
-  req.clientName = name;
+  if (token !== MCP_TOKEN) return res.status(401).end();
+  req.clientName = String(req.headers['x-client-name'] ?? '').trim().slice(0, 20);
   next();
 }
 

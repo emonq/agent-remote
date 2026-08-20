@@ -52,12 +52,17 @@ export MCP_TOOL_TIMEOUT=1200000   # 20 分钟, 单位 ms
 - 超时 → 返回 `{"timeout": true}`，agent 自行决定默认行为
 - 完成后卡片变绿（已回复）/ 灰色（超时）
 
-## 多客户端跟踪（可选）
+## 多设备标注来源（可选）
 
-`CLIENT_TOKENS="laptop:token_a,ci:token_b"`，每个客户端带自己的 token：
+一个 token 多个设备用，接入时加 `X-Client-Name` 请求头标注来源，卡片标题显示 `🤖 laptop 需要你的决策`：
 
-- token → 客户端名服务端映射，卡片标题显示 `🤖 laptop 需要你的决策`
-- 开放性问题回复按**引用**精确路由；多条并行且没带引用时不猜，回红色提示卡要求引用对应消息
+```bash
+claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
+  --header "Authorization: Bearer <MCP_TOKEN>" \
+  --header "X-Client-Name: laptop"
+```
+
+开放性问题回复按**引用**精确路由；多条并行且没带引用时不猜，回红色提示卡要求引用对应消息。
 
 ## Claude Code hook 通知（可选）
 
