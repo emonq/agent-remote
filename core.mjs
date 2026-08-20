@@ -49,6 +49,10 @@ export function matchFreeText({ userId, parentId, text }) {
   return null;
 }
 
+// 外部文本(claude 输出/用户回复)流入 markdown 组件前过一遍:
+// 2.0 会把 ![alt](url) 当图片解析, 而 url 不是飞书 image_key, 整卡直接 400 — 降级成普通链接
+export const md = (s) => String(s ?? '').replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, url) => `[${alt || url}](${url})`);
+
 // CardKit 2.0 卡片骨架: 行内代码等 markdown 扩展只在 2.0 结构支持; 1.0 已全线弃用
 export const mkCard = (template, title, elements) => ({
   schema: '2.0',
@@ -65,7 +69,7 @@ export const mkBtn = (label, value, primary = false) => ({
 });
 
 export function questionCard({ id, question, options, timeoutMin, source }) {
-  const elements = [{ tag: 'markdown', content: question }, { tag: 'hr' }];
+  const elements = [{ tag: 'markdown', content: md(question) }, { tag: 'hr' }];
   if (options?.length) {
     // 2.0 无 action 组件, 按钮直接作顶层 element (每按钮一行, 手机上更好点)
     elements.push(...options.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)));
@@ -79,9 +83,9 @@ export function questionCard({ id, question, options, timeoutMin, source }) {
 export function resolvedCard(question, answer, timedOut, source) {
   const title = timedOut ? '⏰ 已超时' : '✅ 已回复';
   return mkCard(timedOut ? 'grey' : 'green', source ? `${title} · ${source}` : title, [
-    { tag: 'markdown', content: question },
+    { tag: 'markdown', content: md(question) },
     { tag: 'hr' },
-    { tag: 'markdown', content: answer ? `**你的回答:** ${answer}` : '_未回复，已超时_' },
+    { tag: 'markdown', content: answer ? `**你的回答:** ${md(answer)}` : '_未回复，已超时_' },
   ]);
 }
 
@@ -104,7 +108,7 @@ export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作
 export function stopCard({ id, summary, dir }) {
   const where = dir ? ` · ${dir}` : '';
   return mkCard('green', `✅ 任务完成${where}`, [
-    { tag: 'markdown', content: summary },
+    { tag: 'markdown', content: md(summary) },
     { tag: 'hr' },
     { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
     mkBtn(STOP_DONE, { d: id, a: STOP_DONE }),

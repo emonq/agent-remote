@@ -1,6 +1,6 @@
 // 自检: pending 生命周期 / 匹配规则 / 卡片构造 / 绑定码 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, md, issueBindCode, takeBindCode } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
@@ -133,6 +133,16 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
           additionalContext: "用户回复：方案 B",
       },
   });
+}
+
+// 9c. md(): 图片语法降级为链接, 防 2.0 卡片 400
+{
+  assert.equal(md('看图 ![截图](https://example.com/img.png) 完事'), '看图 [截图](https://example.com/img.png) 完事');
+  assert.equal(md('空 alt ![](https://a.com/b.png)'), '空 alt [https://a.com/b.png](https://a.com/b.png)');
+  assert.equal(md('普通 [链接](https://a.com) 不受影响'), '普通 [链接](https://a.com) 不受影响');
+  assert.equal(md(undefined), '');
+  const card = stopCard({ id: 'D-x', summary: '![img](https://example.com/img.png)', dir: '' });
+  assert.ok(!/!\[/.test(card.body.elements[0].content), 'stop 卡 summary 已降级');
 }
 
 // 10. 绑定码: 一次性 + 过期
