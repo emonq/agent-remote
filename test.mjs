@@ -59,13 +59,14 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   resolvePending(id, 'clean'); // 清理
 }
 
-// 6. 卡片构造: 2.0 结构, 按钮 callback value 带 decisionId
+// 6. 卡片构造: 2.0 结构, 按钮为顶层 element, callback value 带 decisionId
 {
   const card = questionCard({ id: 'D-abc123', question: '部署到生产?', options: ['是', '否'], timeoutMin: 10 });
   assert.equal(card.schema, '2.0', 'CardKit 2.0 结构');
-  const actions = card.body.elements.find((e) => e.tag === 'action').actions;
-  assert.equal(actions[0].behaviors[0].value.d, 'D-abc123');
-  assert.equal(actions[0].behaviors[0].value.a, '是');
+  const btns = card.body.elements.filter((e) => e.tag === 'button');
+  assert.equal(btns.length, 2, '无 action 壳, 按钮直接平铺');
+  assert.equal(btns[0].behaviors[0].value.d, 'D-abc123');
+  assert.equal(btns[0].behaviors[0].value.a, '是');
   const noOpt = questionCard({ id: 'D-x', question: 'Q', options: undefined, timeoutMin: 5 });
   assert.ok(noOpt.body.elements.some((e) => e.tag === 'markdown' && /回复/.test(e.content)));
   const done = resolvedCard('Q', '是', false);
@@ -121,7 +122,7 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.ok(/myproj/.test(card.header.title.content));
   assert.ok(/重构完成/.test(card.body.elements[0].content));
   assert.ok(card.body.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
-  const btn = card.body.elements.find((e) => e.tag === 'action').actions[0];
+  const btn = card.body.elements.find((e) => e.tag === 'button');
   assert.equal(btn.behaviors[0].value.d, 'D-stop1');
   assert.equal(btn.behaviors[0].value.a, '✅ 到此为止');
   assert.deepEqual(stopHookResponse(null), { ok: true }, '无回复放行结束');

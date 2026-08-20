@@ -67,7 +67,8 @@ export const mkBtn = (label, value, primary = false) => ({
 export function questionCard({ id, question, options, timeoutMin, source }) {
   const elements = [{ tag: 'markdown', content: question }, { tag: 'hr' }];
   if (options?.length) {
-    elements.push({ tag: 'action', actions: options.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)) });
+    // 2.0 无 action 组件, 按钮直接作顶层 element (每按钮一行, 手机上更好点)
+    elements.push(...options.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)));
   } else {
     elements.push({ tag: 'markdown', content: '*长按引用本条消息回复你的答案*' });
   }
@@ -106,7 +107,7 @@ export function stopCard({ id, summary, dir }) {
     { tag: 'markdown', content: summary },
     { tag: 'hr' },
     { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
-    { tag: 'action', actions: [mkBtn(STOP_DONE, { d: id, a: STOP_DONE })] },
+    mkBtn(STOP_DONE, { d: id, a: STOP_DONE }),
   ]);
 }
 
