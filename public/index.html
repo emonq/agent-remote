@@ -5,79 +5,148 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>agent-remote</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { font: 15px/1.6 system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
-  h1 { font-size: 1.3rem; }
-  h2 { font-size: 1rem; margin-top: 2rem; color: #666; }
-  code, .token { font-family: ui-monospace, monospace; background: rgba(127,127,127,.15); padding: .1em .4em; border-radius: 4px; word-break: break-all; }
-  .card { border: 1px solid rgba(127,127,127,.3); border-radius: 8px; padding: 1rem; margin: .5rem 0; }
-  button { font: inherit; padding: .3rem .9rem; border-radius: 6px; border: 1px solid rgba(127,127,127,.4); background: inherit; cursor: pointer; }
-  button:hover { background: rgba(127,127,127,.15); }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  td, th { text-align: left; padding: .3rem .5rem; border-bottom: 1px solid rgba(127,127,127,.2); }
-  .muted { color: #888; font-size: 13px; }
-  .ok { color: #2a2; } .warn { color: #c60; }
+  :root {
+    color-scheme: light dark;
+    --bg: #f6f7f9; --fg: #1a1d21; --muted: #6b7280; --card: #ffffff;
+    --border: #e5e7eb; --accent: #2563eb; --accent-fg: #fff;
+    --ok: #059669; --warn: #d97706; --chip-ok: #ecfdf5; --chip-warn: #fffbeb;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #111418; --fg: #e7e9ec; --muted: #9ca3af; --card: #1a1e24;
+      --border: #2a2f37; --accent: #3b82f6; --ok: #34d399; --warn: #fbbf24;
+      --chip-ok: #052e21; --chip-warn: #2d2006;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.6 system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--fg); margin: 0; }
+  .wrap { max-width: 680px; margin: 0 auto; padding: 2.5rem 1.25rem 4rem; }
+  header { display: flex; align-items: center; gap: .75rem; margin-bottom: 2rem; }
+  .logo { width: 36px; height: 36px; border-radius: 9px; background: var(--accent); color: var(--accent-fg);
+          display: grid; place-items: center; font-size: 19px; }
+  h1 { font-size: 1.25rem; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+          padding: 1.1rem 1.25rem; margin: .75rem 0; }
+  .card h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em;
+             color: var(--muted); margin: 0 0 .75rem; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+
+  .chip { font-size: 12px; padding: .15rem .6rem; border-radius: 99px; }
+  .chip.ok { background: var(--chip-ok); color: var(--ok); }
+  .chip.warn { background: var(--chip-warn); color: var(--warn); }
+
+  code, .token { font-family: ui-monospace, "SF Mono", monospace; font-size: 13px; }
+  code { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--accent);
+         padding: .15em .5em; border-radius: 6px; }
+  .token { background: color-mix(in srgb, var(--muted) 12%, transparent); padding: .45em .7em;
+           border-radius: 8px; word-break: break-all; display: inline-block; }
+
+  button { font: inherit; font-size: 14px; padding: .4rem 1rem; border-radius: 8px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--card); color: var(--fg); transition: filter .15s; }
+  button:hover { filter: brightness(1.08); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  button.danger { color: #dc2626; border-color: color-mix(in srgb, #dc2626 40%, var(--border)); }
+  .muted { color: var(--muted); font-size: 13px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 12px;
+       padding: .4rem .5rem; border-bottom: 1px solid var(--border); }
+  td { padding: .5rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  .tag { font-size: 12px; padding: .1rem .55rem; border-radius: 5px; white-space: nowrap;
+         background: color-mix(in srgb, var(--muted) 12%, transparent); color: var(--muted); }
+  .tag.ask { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--accent); }
+  .tag.solved { background: var(--chip-ok); color: var(--ok); }
+  .tag.timeout { background: var(--chip-warn); color: var(--warn); }
+  .clip { max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { text-align: center; padding: 1.5rem 0; }
 </style>
 </head>
 <body>
-<h1>agent-remote</h1>
-<div id="app">加载中…</div>
+<div class="wrap">
+  <header>
+    <div class="logo">🤖</div>
+    <div>
+      <h1>agent-remote</h1>
+      <div class="sub">把 agent 的决策问题推到你的飞书</div>
+    </div>
+  </header>
+  <div id="app"><div class="empty muted">加载中…</div></div>
+</div>
 
 <script>
-const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; };
+const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h.trim(); return d.firstElementChild; };
+const esc = (s) => { const d = document.createElement('span'); d.textContent = s; return d.innerHTML; };
 
 async function main() {
   const me = await fetch('/api/me').then((r) => r.json()).catch(() => null);
   const app = document.getElementById('app');
 
-  if (!me) { app.textContent = '服务异常'; return; }
+  if (!me) { app.innerHTML = '<div class="card"><div class="empty">服务异常，稍后重试</div></div>'; return; }
   if (me.login) { location.href = me.login; return; } // 未登录 → OIDC
 
-  app.append($(''), $(''));
-  app.append($(`<h2>账号</h2>`));
-  app.append($(`<div class="card">${me.name}${me.bound ? ' · <span class="ok">已绑定飞书</span>' : ' · <span class="warn">未绑定飞书</span>'}</div>`));
+  // 账号
+  app.append($(`
+    <div class="card">
+      <h2>账号</h2>
+      <div class="row">
+        <strong>${esc(me.name)}</strong>
+        ${me.bound
+          ? '<span class="chip ok">✓ 飞书已绑定</span>'
+          : '<span class="chip warn">未绑定飞书</span>'}
+      </div>
+    </div>`));
 
   // 飞书绑定
-  app.append($('<h2>飞书绑定</h2>'));
-  const bindCard = $('<div class="card"></div>');
+  const bindCard = $('<div class="card"><h2>飞书绑定</h2><div class="bind"></div></div>');
   app.append(bindCard);
   const renderBind = (code) => {
-    bindCard.innerHTML = code
-      ? `在飞书里给机器人发: <code>/bind ${code}</code><div class="muted">10 分钟内有效</div>`
-      : `<button id="bind">生成绑定码</button><span class="muted"> 在飞书发送即可完成绑定</span>`;
-    if (!code) bindCard.querySelector('#bind').onclick = async () => {
-      const r = await fetch('/api/bind-code', { method: 'POST' }).then((r) => r.json());
-      renderBind(r.code);
+    const el = bindCard.querySelector('.bind');
+    el.innerHTML = code
+      ? `<div class="row"><div>在飞书给机器人发&nbsp;<code>/bind ${esc(code)}</code></div><button id="bind" class="primary">重新生成</button></div>
+         <div class="muted" style="margin-top:.4rem">10 分钟内有效，发送后自动完成绑定</div>`
+      : `<div class="row"><div class="muted">生成绑定码，在飞书发送即可绑定你的账号</div><button id="bind" class="primary">生成绑定码</button></div>`;
+    el.querySelector('#bind').onclick = async () => {
+      el.innerHTML = '<div class="muted">生成中…</div>';
+      renderBind((await fetch('/api/bind-code', { method: 'POST' }).then((r) => r.json())).code);
     };
   };
   renderBind();
 
   // token
-  app.append($('<h2>API Token</h2>'));
-  const tokenCard = $('<div class="card"></div>');
+  const tokenCard = $('<div class="card"><h2>API Token</h2><div class="tok"></div></div>');
   app.append(tokenCard);
-  const renderToken = async () => {
-    const t = (await fetch('/api/token').then((r) => r.json())).token;
-    tokenCard.innerHTML = `<span class="token">${t}</span><div><button id="rot">重置 token</button> <span class="muted">重置后旧 token 立即失效</span></div>`;
-    tokenCard.querySelector('#rot').onclick = async () => {
-      if (!confirm('重置后所有使用旧 token 的客户端都会失效, 继续?')) return;
-      const r = await fetch('/api/rotate-token', { method: 'POST' }).then((r) => r.json());
-      tokenCard.querySelector('.token').textContent = r.token;
+  const renderToken = (t) => {
+    const el = tokenCard.querySelector('.tok');
+    el.innerHTML = `<div class="row"><span class="token">${esc(t)}</span>
+        <span><button id="copy">复制</button> <button id="rot" class="danger">重置</button></span></div>
+      <div class="muted" style="margin-top:.4rem">用于 MCP / hook 的 Bearer 认证，重置后旧 token 立即失效</div>`;
+    el.querySelector('#copy').onclick = () => navigator.clipboard.writeText(t);
+    el.querySelector('#rot').onclick = async () => {
+      if (!confirm('重置后所有使用旧 token 的客户端都会失效，继续？')) return;
+      renderToken((await fetch('/api/rotate-token', { method: 'POST' }).then((r) => r.json())).token);
     };
   };
-  renderToken();
+  renderToken((await fetch('/api/token').then((r) => r.json())).token);
 
   // 事件
-  app.append($('<h2>最近事件</h2>'));
-  const ev = $('<table><thead><tr><th>时间</th><th>类型</th><th>内容</th></tr></thead><tbody></tbody></table>');
+  const typeZh = { ask: '提问', solved: '已回复', timeout: '超时', hook: 'hook', bind: '绑定', token_rotated: '重置 token' };
+  const ev = $(`<div class="card"><h2>最近事件</h2>
+    <table><thead><tr><th style="width:140px">时间</th><th style="width:72px">类型</th><th>内容</th></tr></thead><tbody></tbody></table>
+    <div class="empty muted" style="display:none">暂无事件</div></div>`);
   app.append(ev);
-  const typeZh = { ask: '提问', solved: '已回复', timeout: '超时', hook: 'hook 通知', bind: '绑定', token_rotated: '重置token' };
-  for (const e of me.events || []) {
+  const rows = ev.querySelector('tbody');
+  const events = me.events || [];
+  for (const e of events) {
     const p = JSON.parse(e.payload);
-    const detail = p.question ? String(p.question).slice(0, 60) : (p.message || p.answer || '');
-    ev.querySelector('tbody').append($(`<tr><td class="muted">${new Date(e.created_at).toLocaleString()}</td><td>${typeZh[e.type] || e.type}</td><td>${String(detail).slice(0, 80)}</td></tr>`));
+    const detail = p.question ?? p.answer ?? p.message ?? '';
+    rows.append($(`<tr><td class="muted" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</td>
+      <td><span class="tag ${esc(e.type)}">${typeZh[e.type] || esc(e.type)}</span></td>
+      <td><div class="clip" title="${esc(detail)}">${esc(String(detail))}</div></td></tr>`));
   }
-  if (!me.events?.length) ev.querySelector('tbody').append($('<tr><td colspan=3 class="muted">暂无</td></tr>'));
+  if (!events.length) ev.querySelector('.empty').style.display = '';
 }
 main();
 </script>
