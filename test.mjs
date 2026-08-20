@@ -1,6 +1,6 @@
 // 自检: pending 生命周期 / 按钮匹配 / 自由文本匹配 / 卡片构造 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard, hookCard } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
@@ -64,6 +64,18 @@ import { pending, resolvePending, createPending, setMessageId, matchFreeText, qu
   const done = resolvedCard('Q', '是', false);
   assert.equal(done.header.template, 'green');
   assert.equal(resolvedCard('Q', null, true).header.template, 'grey');
+}
+
+// 7. hook 事件: 只认 Stop/Notification/SessionEnd, 其余忽略
+{
+  const stop = hookCard({ hook_event_name: 'Stop', cwd: '/home/u/myproj' });
+  assert.equal(stop.header.template, 'blue');
+  assert.ok(/myproj/.test(stop.header.title.content), '标题带项目目录名');
+  const note = hookCard({ hook_event_name: 'Notification', message: '需要权限确认' });
+  assert.ok(/需要权限确认/.test(note.elements[0].content));
+  assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).elements[0].content));
+  assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
+  assert.equal(hookCard({}), null);
 }
 
 console.log('all tests passed');

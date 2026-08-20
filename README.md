@@ -46,6 +46,21 @@ agent 等待回复的时间较长，客户端工具超时要调大（默认 30s 
 export MCP_TOOL_TIMEOUT=1200000   # 20 分钟, 单位 ms
 ```
 
+## Claude Code hook 通知（可选）
+
+agent 干完活或需要你时推一条消息到手机。在 `~/.claude/settings.json`（或项目 `.claude/settings.json`）加：
+
+```json
+{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "webhook", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }],
+    "Notification": [{ "hooks": [{ "type": "webhook", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }]
+  }
+}
+```
+
+监听的事件：`Stop`（任务完成）、`Notification`（等待输入/权限确认）、`SessionEnd`（会话结束）。其他事件 POST 过来会被忽略，不会刷屏。标题带项目目录名，多项目并行时能分清是谁。
+
 ## 工具
 
 **`ask_user(question, options?, timeout_minutes=10)`**

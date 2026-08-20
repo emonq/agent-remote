@@ -5,7 +5,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, matchFreeText, questionCard, resolvedCard, hookCard } from './core.mjs';
 
 const {
   MCP_TOKEN,            // MCP Bearer token (自定义)
@@ -117,6 +117,14 @@ app.all('/mcp', async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
+});
+
+// Claude Code hook 接收端: settings.json 里配 webhook 类 hook, POST 到这里
+app.post('/claude', async (req, res) => {
+  if (req.headers.authorization !== `Bearer ${MCP_TOKEN}`) return res.status(401).end();
+  const card = hookCard(req.body);
+  if (card) await sendCard(card).catch((e) => console.error('[hook] send failed:', e?.code ?? e?.msg ?? e));
+  res.json({ ok: true }); // hook 不需要返回值, 2xx 即可
 });
 
 app.listen(PORT, () => console.log(`mcp on :${PORT}/mcp`));

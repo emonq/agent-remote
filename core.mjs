@@ -78,3 +78,20 @@ export function resolvedCard(question, answer, timedOut) {
     ],
   };
 }
+
+// Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
+export function hookCard(hook = {}) {
+  const dir = hook.cwd ? hook.cwd.replace(/\/+$/, '').split('/').pop() : '';
+  const where = dir ? ` · ${dir}` : '';
+  const m = {
+    Stop: { icon: '✅', title: '任务完成', body: 'Claude 已完成当前工作，可以回来查看了' },
+    Notification: { icon: '🔔', title: '需要你注意', body: hook.message || 'Claude 在等待输入或确认' },
+    SessionEnd: { icon: '👋', title: '会话结束', body: `会话已结束 (${hook.reason || 'exit'})` },
+  }[hook.hook_event_name];
+  if (!m) return null;
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'blue', title: { tag: 'plain_text', content: `${m.icon} ${m.title}${where}` } },
+    elements: [{ tag: 'markdown', content: m.body }],
+  };
+}
