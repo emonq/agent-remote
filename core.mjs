@@ -103,6 +103,25 @@ export function hookCard(hook = {}) {
   };
 }
 
+// Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
+export function stopCard({ summary, timeoutMin, dir }) {
+  const where = dir ? ` · ${dir}` : '';
+  return {
+    config: { wide_screen_mode: true },
+    header: { template: 'green', title: { tag: 'plain_text', content: `✅ 任务完成${where}` } },
+    elements: [
+      { tag: 'markdown', content: summary },
+      { tag: 'hr' },
+      { tag: 'markdown', content: `**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；${timeoutMin} 分钟内不回复则自动结束` },
+    ],
+  };
+}
+
+// Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败) -> 放行结束
+export const stopHookResponse = (answer) => (answer == null
+  ? { ok: true }
+  : { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: `用户从手机回复：${answer}` } });
+
 // 飞书绑定码: 6 位数字, 10 分钟有效, 内存即可 (重启丢的是未完成的绑定, 无害)
 const bindCodes = new Map(); // code -> { userId, expires }
 export function issueBindCode(userId) {

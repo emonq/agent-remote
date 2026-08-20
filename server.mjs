@@ -6,7 +6,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, issueBindCode, takeBindCode } from './core.mjs';
 import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, unbindFeishu, logEvent, listEvents } from './db.mjs';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
@@ -229,14 +229,36 @@ app.all('/mcp', tokenAuth, async (req, res) => {
   }
 });
 
-// Claude Code hook
+// Claude Code hook; Stop 且已绑飞书 -> 推送本轮结果并等待手机回复 (无回复放行结束, 回复作为反馈让 Claude 继续)
+const STOP_WAIT_MIN = 5; // 需小于 Claude Code hook 默认 600s 超时
 app.post('/claude', tokenAuth, async (req, res) => {
-  const card = hookCard(req.body);
+  const h = req.body;
+  const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+  if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
+    const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
+    let resolveFn;
+    const answerPromise = new Promise((r) => { resolveFn = r; });
+    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: STOP_WAIT_MIN });
+    logEvent(req.user.id, 'hook', { event: 'Stop', project: dir });
+    try {
+      const messageId = await sendCard(stopCard({ summary: question, timeoutMin: STOP_WAIT_MIN, dir }), req.user.feishu_open_id);
+      setMessageId(id, messageId);
+      const answer = await answerPromise;
+      if (answer == null) { // 超时收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件
+        updateCard(messageId, resolvedCard(question, null, true, 'Stop hook')).catch(() => {});
+        logEvent(req.user.id, 'timeout', { question: 'Stop hook 续跑' });
+      }
+      return res.json(stopHookResponse(answer));
+    } catch (e) {
+      console.error('[hook] send failed:', e?.code ?? e?.msg ?? e);
+      resolvePending(id, undefined);
+      return res.json({ ok: true });
+    }
+  }
+  const card = hookCard(h);
   if (card) {
     if (req.user.feishu_open_id) await sendCard(card, req.user.feishu_open_id).catch((e) => console.error('[hook] send failed:', e?.code ?? e?.msg ?? e));
     // 只存摘要: Stop/SessionEnd 没有 message 字段, 原样存 UI 没东西可显示
-    const h = req.body;
-    const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
     logEvent(req.user.id, 'hook', { event: h.hook_event_name, message: h.message || '', project: dir });
   }
   res.json({ ok: true });

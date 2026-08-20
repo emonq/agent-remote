@@ -1,6 +1,6 @@
 // 自检: pending 生命周期 / 匹配规则 / 卡片构造 / 绑定码 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, issueBindCode, takeBindCode } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
@@ -112,6 +112,18 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
   const done = resolvedCard('Q', 'ok', false, 'ci-runner');
   assert.ok(/ci-runner/.test(done.header.title.content));
+}
+
+// 9b. Stop hook: 卡片带结果与引用提示, 应答格式
+{
+  const card = stopCard({ summary: '重构完成', timeoutMin: 5, dir: 'myproj' });
+  assert.ok(/myproj/.test(card.header.title.content));
+  assert.ok(/重构完成/.test(card.elements[0].content));
+  assert.ok(card.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
+  assert.deepEqual(stopHookResponse(null), { ok: true }, '无回复放行结束');
+  assert.deepEqual(stopHookResponse('方案 B'), {
+    hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '用户从手机回复：方案 B' },
+  });
 }
 
 // 10. 绑定码: 一次性 + 过期
