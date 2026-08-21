@@ -41,11 +41,10 @@ function updateCard(messageId, card) {
   return lark.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
 }
 
-// 路径 → 飞书消息: 图片直显, 其余按 file_type 枚举上传后发文件消息
-async function deliverFile(path, openId) {
+// 路径 → 飞书消息: 图片直显, 其余按 file_type 枚举上传后发文件消息; name 为用户看到的文件名(与本地路径无关)
+async function deliverFile(path, openId, name = path.split('/').pop()) {
   const stat = fs.statSync(path);
-  const name = path.split('/').pop();
-  const kind = fileKind(path);
+  const kind = fileKind(name);
   if (kind === 'image') {
     if (stat.size > 10 * 1024 * 1024) throw new Error(`图片 ${stat.size} bytes 超过飞书 10MB 上限`);
     const { image_key } = await lark.im.v1.image.create({ data: { image_type: 'message', image: fs.createReadStream(path) } });
@@ -264,10 +263,11 @@ app.post('/file', rawBody, (req, res) => {
   if (!userId) return res.status(401).json({ error: '票据无效或已过期, 请重新调用 send_file' });
   const user = MULTIUSER ? getUser(userId) : (userId === 'single' ? { id: 'single', name: 'default', feishu_open_id: process.env.FEISHU_USER_OPEN_ID } : null);
   if (!user?.feishu_open_id) return res.status(400).json({ error: '用户未绑定飞书' });
-  const tmp = path.join(os.tmpdir(), `agent-remote-${crypto.randomUUID()}-${String(req.query.name || 'file').replace(/[/\\\0]/g, '_')}`);
+  const name = String(req.query.name || 'file').replace(/[/\\\0]/g, '_');
+  const tmp = path.join(os.tmpdir(), `agent-remote-${crypto.randomUUID()}-${name}`);
   fs.writeFileSync(tmp, req.body);
-  deliverFile(tmp, user.feishu_open_id)
-    .then(() => { fs.rm(tmp, () => {}); logEvent(user.id, 'file', { path: req.query.name, via: 'upload' }); res.json({ ok: true }); })
+  deliverFile(tmp, user.feishu_open_id, name)
+    .then(() => { fs.rm(tmp, () => {}); logEvent(user.id, 'file', { path: name, via: 'upload' }); res.json({ ok: true }); })
     .catch((e) => { fs.rm(tmp, () => {}); res.status(502).json({ error: `转发飞书失败: ${e?.msg || e?.message || e}` }); });
 });
 
