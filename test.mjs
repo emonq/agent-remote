@@ -1,6 +1,6 @@
 // 自检: pending 生命周期 / 匹配规则 / 卡片构造 / 绑定码 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, permissionCard, permissionHookResponse, fmtPermInput, PERM_ALLOW, PERM_DENY, PERM_AUTO, md, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, permissionCard, permissionHookResponse, fmtPermInput, PERM_ALLOW, PERM_DENY, PERM_AUTO, md, fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
@@ -171,6 +171,25 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
   assert.equal(fmtPermInput({ file_path: '/a/b.ts' }), '/a/b.ts', '文件工具显示路径');
   assert.match(fmtPermInput({ query: 'x'.repeat(2000) }), /\.\.\.$/, '超长截断');
   assert.ok(fmtPermInput({}).length > 0, '空输入兜底 JSON');
+}
+
+// 9e. send_file: 扩展名 → 图片直显 / 枚举 file_type / 未知 stream
+{
+  assert.equal(fileKind('/a/screenshot.PNG'), 'image', '大小写不敏感');
+  assert.equal(fileKind('报告.pdf'), 'pdf');
+  assert.equal(fileKind('data.xlsx'), 'xls');
+  assert.equal(fileKind('demo.mp4'), 'mp4');
+  assert.equal(fileKind('archive.tar.gz'), 'stream', '未知扩展名走 stream');
+  assert.equal(fileKind('noext'), 'stream');
+}
+
+// 9f. 上传票据: 一次性 + 过期
+{
+  const t = issueUploadTicket('u1');
+  assert.match(t, /^[0-9a-f]{32}$/, '32 hex 随机');
+  assert.equal(takeUploadTicket(t), 'u1');
+  assert.equal(takeUploadTicket(t), null, '一次性');
+  assert.equal(takeUploadTicket('deadbeef'), null, '无效票据');
 }
 
 // 10. 绑定码: 一次性 + 过期

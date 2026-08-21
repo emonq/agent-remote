@@ -2,11 +2,14 @@
 // MCP: Streamable HTTP + 每用户 token;  飞书: 官方 SDK WS 长连接(免公网回调)
 import express from 'express';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard, fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode } from './core.mjs';
 import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, unbindFeishu, logEvent, listEvents } from './db.mjs';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
@@ -15,6 +18,7 @@ const {
   FEISHU_APP_ID,
   FEISHU_APP_SECRET,
   PORT = 3000,
+  BASE_URL = `http://127.0.0.1:${PORT}`, // Host 头缺失时的兜底回传地址
 } = process.env;
 
 if (!FEISHU_APP_ID || !FEISHU_APP_SECRET) { console.error('missing env FEISHU_APP_ID/FEISHU_APP_SECRET'); process.exit(1); }
@@ -35,6 +39,22 @@ async function sendCard(card, openId) {
 
 function updateCard(messageId, card) {
   return lark.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
+}
+
+// 路径 → 飞书消息: 图片直显, 其余按 file_type 枚举上传后发文件消息
+async function deliverFile(path, openId) {
+  const stat = fs.statSync(path);
+  const name = path.split('/').pop();
+  const kind = fileKind(path);
+  if (kind === 'image') {
+    if (stat.size > 10 * 1024 * 1024) throw new Error(`图片 ${stat.size} bytes 超过飞书 10MB 上限`);
+    const { image_key } = await lark.im.v1.image.create({ data: { image_type: 'message', image: fs.createReadStream(path) } });
+    await lark.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: openId, msg_type: 'image', content: JSON.stringify({ image_key }) } });
+  } else {
+    if (stat.size > 30 * 1024 * 1024) throw new Error(`文件 ${stat.size} bytes 超过飞书 30MB 上限`);
+    const { file_key } = await lark.im.v1.file.create({ data: { file_type: kind, file_name: name, file: fs.createReadStream(path) } });
+    await lark.im.v1.message.create({ params: { receive_id_type: 'open_id' }, data: { receive_id: openId, msg_type: 'file', content: JSON.stringify({ file_key }) } });
+  }
 }
 
 // ---------- 飞书事件 (WSClient 长连接, 免公网) ----------
@@ -91,8 +111,9 @@ await ws.start({
 console.log('feishu ws connected');
 
 // ---------- MCP ----------
-// 每请求新建 (stateless): user/clientName 走闭包, MCP SDK handler 拿不到请求上下文
-function newMcpServer(user, clientName = '') {
+// 每请求新建 (stateless): user/clientName/baseUrl 走闭包, MCP SDK handler 拿不到请求上下文
+// baseUrl 取请求 Host: agent 连哪个地址来, curl 就指回哪个地址
+function newMcpServer(user, clientName = '', baseUrl = BASE_URL) {
   const mcp = new McpServer({ name: 'agent-remote', version: '0.2.0' });
   mcp.tool(
     'ask_user',
@@ -126,12 +147,24 @@ function newMcpServer(user, clientName = '') {
       return { content: [{ type: 'text', text: JSON.stringify({ answer }) }] };
     },
   );
+  mcp.tool(
+    'send_file',
+    '把 agent 工作空间的文件发送到用户手机(飞书)。图片(png/jpg/gif/webp等)聊天里直接显示, 其余类型以文件消息发送(用户可点开预览/下载)。上限: 图片 10MB, 文件 30MB。本工具返回一条 curl 命令(上传端点一次性), 必须原样执行它把文件内容传给服务端才算发送完成; curl 返回 {"ok":true} 即成功, 失败把响应原样报告给用户。',
+    { path: z.string().describe('要发送文件的绝对路径') },
+    async ({ path }) => {
+      if (!user.feishu_open_id) return { content: [{ type: 'text', text: `用户 ${user.name} 尚未绑定飞书` }], isError: true };
+      const t = issueUploadTicket(user.id);
+      const name = encodeURIComponent(path.split('/').pop());
+      return { content: [{ type: 'text', text: `执行以下命令上传文件:\ncurl -sS -X POST --data-binary @${JSON.stringify(path)} "${baseUrl}/file?t=${t}&name=${name}"` }] };
+    },
+  );
   return mcp;
 }
 
 // ---------- HTTP ----------
 const app = express();
 app.use(express.json());
+const rawBody = express.raw({ type: () => true, limit: '35mb' }); // /file 专用: 收任意 content-type 的原始字节
 
 // token 认证: 多用户查 DB, 单用户回退 MCP_TOKEN + FEISHU_USER_OPEN_ID
 function tokenAuth(req, res, next) {
@@ -218,11 +251,24 @@ app.get('/api/token', sessionAuth, (req, res) => {
 app.all('/mcp', tokenAuth, async (req, res) => {
   try {
     const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await newMcpServer(req.user, req.clientName).connect(t);
+    await newMcpServer(req.user, req.clientName, `http://${req.headers.host}`).connect(t);
     await t.handleRequest(req, res, req.body);
   } catch (e) {
     res.status(500).json({ error: String(e) });
   }
+});
+
+// send_file 回落: agent 机器上的文件凭一次性票据推上来, 落盘后转发飞书
+app.post('/file', rawBody, (req, res) => {
+  const userId = takeUploadTicket(req.query.t);
+  if (!userId) return res.status(401).json({ error: '票据无效或已过期, 请重新调用 send_file' });
+  const user = MULTIUSER ? getUser(userId) : (userId === 'single' ? { id: 'single', name: 'default', feishu_open_id: process.env.FEISHU_USER_OPEN_ID } : null);
+  if (!user?.feishu_open_id) return res.status(400).json({ error: '用户未绑定飞书' });
+  const tmp = path.join(os.tmpdir(), `agent-remote-${crypto.randomUUID()}-${String(req.query.name || 'file').replace(/[/\\\0]/g, '_')}`);
+  fs.writeFileSync(tmp, req.body);
+  deliverFile(tmp, user.feishu_open_id)
+    .then(() => { fs.rm(tmp, () => {}); logEvent(user.id, 'file', { path: req.query.name, via: 'upload' }); res.json({ ok: true }); })
+    .catch((e) => { fs.rm(tmp, () => {}); res.status(502).json({ error: `转发飞书失败: ${e?.msg || e?.message || e}` }); });
 });
 
 // Claude Code hook; Stop 且已绑飞书 -> 推送本轮结果并等待手机回复 (无回复放行结束, 回复作为反馈让 Claude 继续)

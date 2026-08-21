@@ -154,6 +154,29 @@ export function permissionHookResponse(answer) {
   return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } };
 }
 
+// send_file 用: 扩展名 → 飞书上传类型; 图片直显(≤10MB), 其余按 im.file 的 file_type 枚举映射, 未知走 stream
+const IMG_EXT = new Set(['jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'ico', 'tiff', 'heic']);
+const FILE_TYPES = { opus: 'opus', mp4: 'mp4', pdf: 'pdf', doc: 'doc', docx: 'doc', xls: 'xls', xlsx: 'xls', ppt: 'ppt', pptx: 'ppt' };
+export const fileKind = (path) => {
+  const ext = String(path).split('.').pop().toLowerCase();
+  return IMG_EXT.has(ext) ? 'image' : FILE_TYPES[ext] || 'stream';
+};
+
+// send_file 上传票据: 一次性 + 5 分钟; agent 机器上的文件服务端读不到时, 凭 curl 指引推到 /file
+const uploadTickets = new Map(); // ticket -> { userId, expires }
+export function issueUploadTicket(userId) {
+  const t = crypto.randomBytes(16).toString('hex');
+  uploadTickets.set(t, { userId, expires: Date.now() + 300_000 });
+  for (const [k, v] of uploadTickets) if (v.expires < Date.now()) uploadTickets.delete(k);
+  return t;
+}
+export function takeUploadTicket(t) {
+  const v = uploadTickets.get(String(t));
+  if (!v || v.expires < Date.now()) return null;
+  uploadTickets.delete(t);
+  return v.userId;
+}
+
 // 飞书绑定码: 6 位数字, 10 分钟有效, 内存即可 (重启丢的是未完成的绑定, 无害)
 const bindCodes = new Map(); // code -> { userId, expires }
 export function issueBindCode(userId) {
