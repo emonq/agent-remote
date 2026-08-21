@@ -92,12 +92,13 @@ claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
 {
   "hooks": {
     "Stop": [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }],
-    "Notification": [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }]
+    "Notification": [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "http", "url": "http://127.0.0.1:3000/claude", "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }] }]
   }
 }
 ```
 
-`Stop`（任务完成）、`Notification`（等待输入/权限确认）、`SessionEnd`（会话结束），其他事件忽略。标题带项目目录名，多项目并行能分清。
+`Stop`（任务完成）、`Notification`（等待输入/权限确认）、`SessionEnd`（会话结束）、`PermissionRequest`（远程授权），其他事件忽略。标题带项目目录名，多项目并行能分清。
 
 绑定飞书后，`Stop` 会升级为交互式：Claude 本轮结果推到手机，**长按引用该消息回复**即可让 Claude 继续干（回复内容作为反馈注入，例如回复“方案 B，继续实现”）；点「✅ 到此为止」或不回复则放行结束。多项目/多会话同时挂起时请务必引用对应消息，避免回复串台。
 
@@ -106,6 +107,18 @@ claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
 ```json
 { "type": "http", "url": "http://127.0.0.1:3000/claude", "timeout": 1800, "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }
 ```
+
+### PermissionRequest：远程授权
+
+绑定飞书后，`PermissionRequest` 变成手机上的授权卡：工具名 + 命令/参数正文，三个按钮——
+
+- **✅ 允许** — 放行本次调用
+- **❌ 拒绝** — 拒绝，原因回给 Claude（可调整方案后重试）
+- **🔓 允许并切换 auto** — 放行本次，并把会话权限模式切成 `auto`（仅内存，会话结束失效）：后续调用由 classifier 自动放行，不再逐条弹窗
+
+多用户模式下**引用回复**该卡片=拒绝并附上你的理由。超时、发送失败或未绑飞书时不做决策，权限确认回落到终端照常弹。
+
+**注意**：等你在手机上点按钮期间 Claude Code 是阻塞的，等太久（hook `timeout` 默认 600s）连接会被掐断、回落终端确认。远程授权建议把 `timeout` 调大（同 Stop 的配法）。
 
 ## 开发
 

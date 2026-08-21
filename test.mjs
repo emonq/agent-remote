@@ -1,6 +1,6 @@
 // 自检: pending 生命周期 / 匹配规则 / 卡片构造 / 绑定码 (不依赖飞书)
 import assert from 'node:assert';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, md, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, permissionCard, permissionHookResponse, fmtPermInput, PERM_ALLOW, PERM_DENY, PERM_AUTO, md, issueBindCode, takeBindCode } from './core.mjs';
 
 // 1. 按钮路径: createPending -> setMessageId -> resolvePending
 {
@@ -139,10 +139,38 @@ import { pending, resolvePending, createPending, setMessageId, pendingForUser, m
 {
   assert.equal(md('看图 ![截图](https://example.com/img.png) 完事'), '看图 [截图](https://example.com/img.png) 完事');
   assert.equal(md('空 alt ![](https://a.com/b.png)'), '空 alt [https://a.com/b.png](https://a.com/b.png)');
+  assert.equal(md('嵌套 ![alt [inner]](https://a.com/b.png) 图'), '嵌套 [alt [inner]](https://a.com/b.png) 图', 'alt 嵌套括号');
+  assert.equal(md('wiki ![x](https://en.wikipedia.org/wiki/Foo_(bar)) 图'), 'wiki [x](https://en.wikipedia.org/wiki/Foo_(bar)) 图', 'URL 带配对括号');
   assert.equal(md('普通 [链接](https://a.com) 不受影响'), '普通 [链接](https://a.com) 不受影响');
+  assert.equal(md('引用式 ![alt][ref] 不动'), '引用式 ![alt][ref] 不动', '2.0 不认引用式图片, 原样保留');
   assert.equal(md(undefined), '');
   const card = stopCard({ id: 'D-x', summary: '![img](https://example.com/img.png)', dir: '' });
   assert.ok(!/!\[/.test(card.body.elements[0].content), 'stop 卡 summary 已降级');
+}
+
+// 9d. PermissionRequest hook: 卡片三按钮, 应答 allow/deny/auto, 无应答不决策
+{
+  const card = permissionCard({ id: 'D-perm1', toolName: 'Bash', toolInput: { command: 'rm -rf node_modules', description: '清理' }, dir: 'myproj' });
+  assert.ok(/myproj/.test(card.header.title.content), '标题带项目目录名');
+  assert.equal(card.header.template, 'orange');
+  assert.ok(/rm -rf node_modules/.test(card.body.elements[0].content), 'Bash 显示命令');
+  const btns = card.body.elements.filter((e) => e.tag === 'button');
+  assert.equal(btns.length, 3, '允许/拒绝/切 auto 三按钮');
+  assert.equal(btns[0].behaviors[0].value.d, 'D-perm1');
+  assert.equal(btns[0].type, 'primary', '允许为 primary');
+  assert.equal(btns.map((b) => b.behaviors[0].value.a).join('|'), [PERM_ALLOW, PERM_DENY, PERM_AUTO].join('|'));
+
+  assert.deepEqual(permissionHookResponse(null), { ok: true }, '无应答不决策, 回落终端确认');
+  assert.deepEqual(permissionHookResponse(PERM_ALLOW), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } });
+  assert.deepEqual(permissionHookResponse(PERM_AUTO), { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'auto', destination: 'session' }] } } }, 'auto = allow + setMode session');
+  const deny = permissionHookResponse(PERM_DENY);
+  assert.equal(deny.hookSpecificOutput.decision.behavior, 'deny');
+  assert.equal(permissionHookResponse('不要动那个目录').hookSpecificOutput.decision.message, '用户拒绝: 不要动那个目录', '引用回复=拒绝并附理由');
+
+  assert.equal(fmtPermInput({ command: 'ls' }), 'ls', 'Bash 显示 command');
+  assert.equal(fmtPermInput({ file_path: '/a/b.ts' }), '/a/b.ts', '文件工具显示路径');
+  assert.match(fmtPermInput({ query: 'x'.repeat(2000) }), /\.\.\.$/, '超长截断');
+  assert.ok(fmtPermInput({}).length > 0, '空输入兜底 JSON');
 }
 
 // 10. 绑定码: 一次性 + 过期

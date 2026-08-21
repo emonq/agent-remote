@@ -51,7 +51,8 @@ export function matchFreeText({ userId, parentId, text }) {
 
 // 外部文本(claude 输出/用户回复)流入 markdown 组件前过一遍:
 // 2.0 会把 ![alt](url) 当图片解析, 而 url 不是飞书 image_key, 整卡直接 400 — 降级成普通链接
-export const md = (s) => String(s ?? '').replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (_m, alt, url) => `[${alt || url}](${url})`);
+// alt 允许嵌套 [](Claude 常写 "[架构图]" 这类); url 允许配对括号 (wiki 风格路径)
+export const md = (s) => String(s ?? '').replace(/!\[((?:[^\][]|\[[^\]]*\])*)\]\((\([^()]*\)|[^())]+(?:\([^()]*\)[^())]*)*)\)/g, (_m, alt, url) => `[${alt || url}](${url})`);
 
 // CardKit 2.0 卡片骨架: 行内代码等 markdown 扩展只在 2.0 结构支持; 1.0 已全线弃用
 export const mkCard = (template, title, elements) => ({
@@ -119,6 +120,39 @@ export function stopCard({ id, summary, dir }) {
 export const stopHookResponse = (answer) => (answer == null || answer === STOP_DONE
   ? { ok: true }
   : { hookSpecificOutput: { hookEventName: 'Stop', additionalContext: `用户回复：${answer}` } });
+
+// PermissionRequest hook 交互: 权限确认推手机, 点按钮远程 allow/deny; 标签兼哨兵(同 STOP_DONE)
+export const PERM_ALLOW = '✅ 允许';
+export const PERM_DENY = '❌ 拒绝';
+export const PERM_AUTO = '🔓 允许并切换 auto';
+export const PERM_OPTIONS = [PERM_ALLOW, PERM_DENY, PERM_AUTO];
+
+// tool_input 摘要: Bash 类显示命令, 文件类显示路径, 其余 JSON 全文, 超长截断
+export function fmtPermInput(toolInput = {}) {
+  let s = toolInput.command ?? (toolInput.file_path ? `${toolInput.file_path}${toolInput.old_string ? ` (old: ${toolInput.old_string.slice(0, 100)})` : ''}` : null) ?? JSON.stringify(toolInput, null, 2);
+  if (s.length > 1500) s = `${s.slice(0, 1500)}\n...`;
+  return s;
+}
+
+export function permissionCard({ id, toolName, toolInput, dir }) {
+  const where = dir ? ` · ${dir}` : '';
+  return mkCard('orange', `🔐 权限确认${where}`, [
+    { tag: 'markdown', content: `**${toolName}** 请求权限:\n\`\`\`\n${fmtPermInput(toolInput)}\n\`\`\`` },
+    { tag: 'hr' },
+    ...PERM_OPTIONS.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)),
+  ]);
+}
+
+// PermissionRequest 应答: 允许/拒绝/允许+切 auto; 无应答(超时/断连/发送失败) -> 不决策, 回落终端确认
+export function permissionHookResponse(answer) {
+  if (answer == null) return { ok: true };
+  const decision = answer === PERM_ALLOW
+    ? { behavior: 'allow' }
+    : answer === PERM_AUTO
+      ? { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'auto', destination: 'session' }] } // session=仅内存, 会话结束失效
+      : { behavior: 'deny', message: answer === PERM_DENY ? '用户在手机上拒绝了此操作' : `用户拒绝: ${answer}` };
+  return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } };
+}
 
 // 飞书绑定码: 6 位数字, 10 分钟有效, 内存即可 (重启丢的是未完成的绑定, 无害)
 const bindCodes = new Map(); // code -> { userId, expires }

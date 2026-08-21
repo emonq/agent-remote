@@ -6,7 +6,7 @@ import * as Lark from '@larksuiteoapi/node-sdk';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
-import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, mkCard, issueBindCode, takeBindCode } from './core.mjs';
+import { pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText, questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, STOP_DONE, permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard, issueBindCode, takeBindCode } from './core.mjs';
 import { upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken, bindFeishu, unbindFeishu, logEvent, listEvents } from './db.mjs';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.mjs';
 
@@ -226,10 +226,33 @@ app.all('/mcp', tokenAuth, async (req, res) => {
 });
 
 // Claude Code hook; Stop 且已绑飞书 -> 推送本轮结果并等待手机回复 (无回复放行结束, 回复作为反馈让 Claude 继续)
+// PermissionRequest 且已绑飞书 -> 权限确认推手机, 点按钮远程 allow/deny/切 auto (无回复不决策, 回落终端确认)
 // 等待以客户端连接为准: 不设固定超时, Claude Code hook timeout 掐断连接时 close 兜底放行
 app.post('/claude', tokenAuth, async (req, res) => {
   const h = req.body;
   const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+  if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
+    const question = `${h.tool_name} 权限请求: ${JSON.stringify(h.tool_input).slice(0, 500)}`;
+    let resolveFn;
+    const answerPromise = new Promise((r) => { resolveFn = r; });
+    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: PERM_OPTIONS, question, timeoutMinutes: 24 * 60 }); // 兜底上限, 实际由连接断开决定
+    logEvent(req.user.id, 'hook', { event: 'PermissionRequest', project: dir, tool: h.tool_name });
+    res.on('close', () => resolvePending(id, undefined)); // 客户端超时/断开: 不决策, 回落终端确认
+    try {
+      const messageId = await sendCard(permissionCard({ id, toolName: h.tool_name, toolInput: h.tool_input, dir }), req.user.feishu_open_id);
+      setMessageId(id, messageId);
+      const answer = await answerPromise;
+      if (answer == null) { // 超时/断连收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件
+        updateCard(messageId, resolvedCard(question, null, true)).catch(() => {});
+        logEvent(req.user.id, 'timeout', { question });
+      }
+      return res.json(permissionHookResponse(answer));
+    } catch (e) {
+      console.error('[hook] send failed:', e?.code ?? e?.msg ?? e);
+      resolvePending(id, undefined);
+      return res.json({ ok: true });
+    }
+  }
   if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
     const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
     let resolveFn;
