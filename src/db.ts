@@ -79,6 +79,8 @@ export function bindFeishu(userId: string, openId: string): void {
 
 export const unbindFeishu = (userId: string) =>
   db.prepare('UPDATE users SET feishu_open_id = NULL WHERE id = ?').run(userId);
+// 取消应用配置时用: open_id 是应用维度的, 换应用后旧绑定全部失效
+export const clearAllBindings = () => db.prepare('UPDATE users SET feishu_open_id = NULL').run();
 
 export const logEvent = (userId: string | null, type: string, payload: Record<string, unknown> = {}) =>
   db.prepare('INSERT INTO events (user_id, type, payload, created_at) VALUES (?,?,?,?)')
@@ -95,3 +97,5 @@ export const setSetting = (key: string, value: unknown): void => {
   db.prepare('INSERT INTO settings (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
     .run(key, String(value));
 };
+export const delSetting = (key: string) =>
+  db.prepare('DELETE FROM settings WHERE key = ?').run(key);

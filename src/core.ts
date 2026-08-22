@@ -256,3 +256,15 @@ export function takeBindCode(code: unknown): string | null {
   bindCodes.delete(String(code));
   return v.userId;
 }
+
+// 飞书渠道解析 (以能用为先): 凭据和渠道同源才可用 — 手动 .env 凭据信 .env 声明;
+// 扫码凭据用扫码时一起落库的渠道; .env 声明与扫码保存的不一致按可用的来, conflict 供启动告警
+export function resolveDomain({ envDomain, savedDomain, envApp }: {
+  envDomain?: string; savedDomain?: string; envApp: boolean;
+}): { domain: 'lark' | 'feishu'; conflict: boolean } {
+  const ok = (d?: string) => (d === 'lark' || d === 'feishu' ? (d as 'lark' | 'feishu') : undefined);
+  const declared = ok(envDomain);
+  const saved = ok(savedDomain);
+  if (saved && !envApp) return { domain: saved, conflict: Boolean(declared && declared !== saved) };
+  return { domain: declared ?? 'feishu', conflict: false };
+}

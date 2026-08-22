@@ -6,7 +6,7 @@ import {
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
   permissionCard, permissionHookResponse, fmtPermInput,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, md, fileKind,
-  issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
+  issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
 
 describe('pending 生命周期', () => {
@@ -192,5 +192,22 @@ describe('send_file / 绑定码', () => {
     assert.equal(takeBindCode(code), null, '绑定码一次性');
     assert.equal(takeBindCode('000000'), null, '无效码');
     assert.match(code, /^\d{6}$/);
+  });
+
+  it('resolveDomain: 渠道跟凭据同源, 冲突以可用的扫码渠道为准', () => {
+    // 扫码保存的渠道压过 .env 的错误声明 (以能用为先)
+    assert.deepEqual(resolveDomain({ envDomain: 'lark', savedDomain: 'feishu', envApp: false }),
+      { domain: 'feishu', conflict: true });
+    // 一致或 .env 未声明: 直接用扫码保存的
+    assert.deepEqual(resolveDomain({ envDomain: 'feishu', savedDomain: 'feishu', envApp: false }),
+      { domain: 'feishu', conflict: false });
+    assert.deepEqual(resolveDomain({ savedDomain: 'lark', envApp: false }), { domain: 'lark', conflict: false });
+    // 手动 env 凭据: 信 .env 声明, 忽略残留扫码记录
+    assert.deepEqual(resolveDomain({ envDomain: 'lark', savedDomain: 'feishu', envApp: true }),
+      { domain: 'lark', conflict: false });
+    // 无扫码记录: 用 .env 声明, 默认 feishu; 非法值当未配
+    assert.deepEqual(resolveDomain({ envDomain: 'lark', envApp: false }), { domain: 'lark', conflict: false });
+    assert.deepEqual(resolveDomain({}), { domain: 'feishu', conflict: false });
+    assert.deepEqual(resolveDomain({ envDomain: 'LARK', envApp: false }), { domain: 'feishu', conflict: false });
   });
 });

@@ -34,6 +34,31 @@ async function main() {
     box.querySelector('#k').focus();
   }
 
+  // 飞书应用配置 (实例级): 未配置→引导扫码配对; 已配置→(解锁后)可取消配置重扫
+  const cfgCard = $('<div class="card"><h2>飞书应用</h2><div class="cfg"></div></div>');
+  app.append(cfgCard);
+  const canAdmin = Boolean(me.key_ok || KEY);
+  const renderCfg = () => {
+    const el = cfgCard.querySelector('.cfg');
+    if (!me.app_configured) {
+      el.innerHTML = `<div class="row"><span class="chip warn">未配置</span>
+        <span class="muted" style="flex:1">agent 的提问无法推送，先创建并绑定飞书应用</span>
+        ${canAdmin ? '<button id="cfg" class="primary">去扫码配对</button>' : '<span class="muted">用启动日志里的 key 解锁后可配对</span>'}</div>`;
+      const b = el.querySelector('#cfg');
+      if (b) b.onclick = () => { location.href = '/setup?key=' + encodeURIComponent(KEY); };
+      return;
+    }
+    el.innerHTML = `<div class="row"><span class="chip ok">✓ 应用已配置</span>${canAdmin ? '<button id="cfg" class="danger">取消配置</button>' : ''}</div>`;
+    const b = el.querySelector('#cfg');
+    if (b) b.onclick = async () => {
+      if (!confirm('将清除应用凭据和所有用户的飞书绑定，之后需重新扫码配对，继续？')) return;
+      const r = await fetch(api('/api/unconfigure'), { method: 'POST' }).then((x) => x.json()).catch(() => null);
+      if (!r || r.error) { alert(r?.error || '操作失败'); return; }
+      location.href = '/setup?key=' + encodeURIComponent(KEY);
+    };
+  };
+  renderCfg();
+
   // 账号 (两种模式都有)
   app.append($(`
     <div class="card">

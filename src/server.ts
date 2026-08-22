@@ -15,11 +15,13 @@ import {
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
   permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
+  resolveDomain,
   type ClaudeHook, type CardCallbackValue,
 } from './core.js';
 import {
   upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken,
-  bindFeishu, unbindFeishu, logEvent, listEvents, getSetting, setSetting,
+  bindFeishu, unbindFeishu, clearAllBindings, logEvent, listEvents,
+  getSetting, setSetting, delSetting,
   type User,
 } from './db.js';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.js';
@@ -42,14 +44,14 @@ if (!MULTIUSER) upsertUser('single', 'default', 'single');
 // 凭据来源优先级: env > 扫码初始化落 SQLite 的; 都没有也照常起服务, 打开 /setup 扫码一键创建并绑定
 let appId = FEISHU_APP_ID || getSetting('feishu_app_id') || '';
 let appSecret = FEISHU_APP_SECRET || getSetting('feishu_secret') || '';
-const envDomain = process.env.FEISHU_DOMAIN;
-const savedDomain = getSetting('feishu_domain'); // 扫码创建保存的渠道; 无则未走扫码
-const envDomainSet = ['lark', 'feishu'].includes(envDomain!);
-let domainStr = envDomainSet ? envDomain! : (savedDomain === 'lark' ? 'lark' : 'feishu');
-// 走过扫码创建但 .env 显式配了不同渠道: 按配置走 (env 优先, 以能用为先), 仅提醒对齐
-if (envDomainSet && savedDomain && envDomain !== savedDomain) {
-  console.warn(`[feishu] .env FEISHU_DOMAIN=${envDomain} 与扫码保存的渠道(${savedDomain})不一致, 按配置用 ${envDomain}; 若收发消息失败请对齐 .env 或重新扫码`);
-}
+const { domain, conflict } = resolveDomain({
+  envDomain: process.env.FEISHU_DOMAIN,
+  savedDomain: getSetting('feishu_domain'),
+  envApp: Boolean(FEISHU_APP_ID && FEISHU_APP_SECRET),
+});
+let domainStr = domain;
+// 渠道按可用的来; 与 .env 声明不一致仅提醒
+if (conflict) console.warn(`[feishu] .env FEISHU_DOMAIN=${process.env.FEISHU_DOMAIN} 与扫码创建应用的渠道(${getSetting('feishu_domain')})不一致, 按可用渠道用 ${domainStr}; 请对齐 .env 或重新扫码`);
 const asDomain = () => (domainStr === 'lark' ? Lark.Domain.Lark : Lark.Domain.Feishu);
 
 // 管理凭据 key: 每次启动随机; /setup 与单用户网页写操作都认它 (或 env MCP_TOKEN)
@@ -57,6 +59,7 @@ const setupKey = crypto.randomBytes(6).toString('hex');
 const keyOk = (k: unknown): boolean => k === setupKey || (MCP_TOKEN && k === MCP_TOKEN);
 
 let lark: Lark.Client | null = null;
+let ws: Lark.WSClient | null = null; // 取消配置时断开旧应用的长连接
 
 // card.action.trigger 回调载荷 (SDK IHandles 未类型化此回调事件, 自建用到的部分)
 interface CardActionTriggerData {
@@ -101,7 +104,7 @@ async function deliverFile(path: string, openId: string, name: string = path.spl
 function initFeishu(): boolean {
   if (!appId || !appSecret) return false;
   lark = new Lark.Client({ appId, appSecret, domain: asDomain() });
-  const ws = new Lark.WSClient({
+  ws = new Lark.WSClient({
     appId, appSecret, domain: asDomain(),
     onError: (e) => console.error('[feishu ws]', errStr(e)),
   });
@@ -284,6 +287,7 @@ app.get('/api/me', sessionAuth, (req: Request & { user?: User | null }, res: Res
     const u = getUser('single')!;
     return res.json({
       single: true, name: u.name, multiuser: false,
+      app_configured: Boolean(appId && appSecret),
       bound: Boolean(u.feishu_open_id),
       key_ok: keyOk(req.query.key),
       token_locked: Boolean(MCP_TOKEN), // env 配置的 token 只读展示, 网页不可重置
@@ -291,7 +295,7 @@ app.get('/api/me', sessionAuth, (req: Request & { user?: User | null }, res: Res
     });
   }
   if (!req.user) return res.status(401).json({ login: '/auth/login' });
-  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, events: listEvents(req.user.id, 30) });
+  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, app_configured: Boolean(appId && appSecret), events: listEvents(req.user.id, 30) });
 });
 app.post('/api/rotate-token', userAuth, (req: Request & { user: User }, res: Response) => {
   if (!MULTIUSER && MCP_TOKEN) return res.status(403).json({ error: 'token 来自环境变量 MCP_TOKEN, 请改 .env 后重启' });
@@ -330,7 +334,7 @@ function applySetupResult(r: RegisterAppResult): void {
   }
 }
 
-// 已配置后引导页无意义; 未配置窗口期凭 key 防局域网内他人抢绑自己的应用
+// 已配置后引导页关闭 — 重扫须先在管理页「取消配置」; 未配置窗口期凭 key 防局域网内他人抢绑自己的应用
 const setupGated = [
   (req: Request, res: Response, next: NextFunction) => { if (appId && appSecret) return res.redirect('/'); next(); },
   (req: Request, res: Response, next: NextFunction) => { if (!keyOk(req.query.key)) return res.status(403).send('setup key 无效 (见服务启动日志)'); next(); },
@@ -347,6 +351,20 @@ app.get('/api/setup/status', (req: Request, res: Response, next: NextFunction) =
   if (s.error) return res.json({ phase: 'error', code: s.error.code, description: s.error.description });
   if (s.result) return res.json({ phase: 'done' });
   res.json({ phase: 'waiting', url: s.url, qr_svg: s.qrSvg, expire_in: s.expireIn });
+});
+
+// 取消配置: 清扫码落库的凭据 + 全部飞书绑定 (open_id 是应用维度的), 断开旧应用长连接; 之后 /setup 可重扫
+app.post('/api/unconfigure', (req: Request, res: Response) => {
+  if (!keyOk(req.query.key)) return res.status(403).json({ error: 'setup key 无效 (见服务启动日志)' });
+  if (FEISHU_APP_ID && FEISHU_APP_SECRET) return res.status(403).json({ error: '凭据来自环境变量 FEISHU_APP_ID/SECRET, 请改 .env 后重启' });
+  if (!appId || !appSecret) return res.status(400).json({ error: '尚未配置' });
+  delSetting('feishu_app_id'); delSetting('feishu_secret'); delSetting('feishu_domain');
+  appId = ''; appSecret = ''; domainStr = 'feishu';
+  ws?.close(); lark = null;
+  clearAllBindings();
+  logEvent(null, 'unbind', { via: 'unconfigure' });
+  console.log(`[setup] 已取消飞书配置, 重新配对: http://127.0.0.1:${PORT}/setup?key=${setupKey}`);
+  res.json({ ok: true });
 });
 
 // MCP endpoint

@@ -6,12 +6,15 @@ import assert from 'node:assert/strict';
 process.env.DB_PATH = ':memory:';
 
 describe('settings 存储', () => {
-  it('get/set + upsert 覆盖', async () => {
-    const { getSetting, setSetting } = await import('../dist/db.js');
+  it('get/set + upsert 覆盖 + 删除', async () => {
+    const { getSetting, setSetting, delSetting } = await import('../dist/db.js');
     assert.equal(getSetting('k'), undefined);
     setSetting('k', 'v1');
     assert.equal(getSetting('k'), 'v1');
     setSetting('k', 'v2');
     assert.equal(getSetting('k'), 'v2', 'upsert 覆盖');
+    delSetting('k');
+    assert.equal(getSetting('k'), undefined, '删除生效');
+    assert.doesNotThrow(() => delSetting('k'), '重复删除无害');
   });
 });
