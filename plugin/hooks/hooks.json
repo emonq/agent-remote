@@ -1,0 +1,48 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 3600,
+            "command": "curl -sS -m \"${CLAUDE_PLUGIN_OPTION_TIMEOUT_SECONDS:-600}\" -X POST \"${CLAUDE_PLUGIN_OPTION_BASE_URL:-http://127.0.0.1:3000}/claude\" -H \"Authorization: Bearer ${CLAUDE_PLUGIN_OPTION_TOKEN}\" -H \"Content-Type: application/json\" -H \"X-Client-Name: ${CLAUDE_PLUGIN_OPTION_CLIENT_NAME}\" --data-binary @-"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 3600,
+            "command": "curl -sS -m \"${CLAUDE_PLUGIN_OPTION_TIMEOUT_SECONDS:-600}\" -X POST \"${CLAUDE_PLUGIN_OPTION_BASE_URL:-http://127.0.0.1:3000}/claude\" -H \"Authorization: Bearer ${CLAUDE_PLUGIN_OPTION_TOKEN}\" -H \"Content-Type: application/json\" -H \"X-Client-Name: ${CLAUDE_PLUGIN_OPTION_CLIENT_NAME}\" --data-binary @-"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 3600,
+            "command": "curl -sS -m \"${CLAUDE_PLUGIN_OPTION_TIMEOUT_SECONDS:-600}\" -X POST \"${CLAUDE_PLUGIN_OPTION_BASE_URL:-http://127.0.0.1:3000}/claude\" -H \"Authorization: Bearer ${CLAUDE_PLUGIN_OPTION_TOKEN}\" -H \"Content-Type: application/json\" -H \"X-Client-Name: ${CLAUDE_PLUGIN_OPTION_CLIENT_NAME}\" --data-binary @-"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 3600,
+            "command": "curl -sS -m \"${CLAUDE_PLUGIN_OPTION_TIMEOUT_SECONDS:-600}\" -X POST \"${CLAUDE_PLUGIN_OPTION_BASE_URL:-http://127.0.0.1:3000}/claude\" -H \"Authorization: Bearer ${CLAUDE_PLUGIN_OPTION_TOKEN}\" -H \"Content-Type: application/json\" -H \"X-Client-Name: ${CLAUDE_PLUGIN_OPTION_CLIENT_NAME}\" --data-binary @-"
+          }
+        ]
+      }
+    ]
+  }
+}

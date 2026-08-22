@@ -3,5 +3,6 @@ node_modules
 *.env
 !.env.example
 .mcp.json
+!plugin/.mcp.json
 data
 dist

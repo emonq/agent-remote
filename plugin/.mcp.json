@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "agent-remote": {
+      "type": "http",
+      "url": "${user_config.base_url}/mcp",
+      "headers": {
+        "Authorization": "Bearer ${user_config.token}",
+        "X-Client-Name": "${user_config.client_name}"
+      }
+    }
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "name": "agent-remote",
+  "displayName": "Agent Remote",
+  "version": "1.0.0",
+  "description": "把 agent 的问题推到手机(飞书/Lark), 阻塞等待回复; 任务完成/需要授权时推送通知, 手机上远程放行权限",
+  "author": { "name": "emonq" },
+  "homepage": "https://github.com/emonq/agent-remote",
+  "repository": "https://github.com/emonq/agent-remote",
+  "license": "MIT",
+  "keywords": ["mcp", "feishu", "lark", "notification", "mobile", "remote"],
+  "userConfig": {
+    "base_url": {
+      "type": "string",
+      "title": "服务地址",
+      "description": "agent-remote 服务地址, 如 http://127.0.0.1:3000",
+      "default": "http://127.0.0.1:3000"
+    },
+    "token": {
+      "type": "string",
+      "title": "API Token",
+      "description": "多用户在网页登录后查看; 单用户在管理页生成",
+      "sensitive": true,
+      "required": true
+    },
+    "client_name": {
+      "type": "string",
+      "title": "设备标注(可选)",
+      "description": "一个 token 多设备用时区分来源, 卡片标题显示 '🤖 <名称> 需要你的决策'",
+      "default": ""
+    },
+    "timeout_seconds": {
+      "type": "number",
+      "title": "等待手机回复时长(秒)",
+      "description": "Stop/PermissionRequest 等你手机操作的最长时间, 到时回落终端照常处理",
+      "default": 600,
+      "min": 10
+    }
+  }
+}

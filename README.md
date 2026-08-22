@@ -46,14 +46,20 @@ docker compose up -d --build
 # 或裸跑: npm install && npm start
 ```
 
-## 接给 Claude Code
+## 接给 Claude Code（插件一键安装）
 
 token 从哪拿：多用户在网页登录后查看自己的 token；单用户看 env 的 `MCP_TOKEN`（没配的话在管理页生成）。
 
 ```bash
-claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
-  --header "Authorization: Bearer <TOKEN>"
+claude plugin marketplace add emonq/agent-remote
+claude plugin install agent-remote@agent-remote --config token=<你的TOKEN>
 ```
+
+或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
+
+安装时可配（事后在 `/plugin` 插件配置里也能改）：`base_url` 服务地址（默认 `http://127.0.0.1:3000`）、`client_name` 多设备标注、`timeout_seconds` 等手机回复时长（默认 600 秒）。
+
+> 之前用手动方式接入的先删旧条目避免重复：`claude mcp remove agent-remote`，并清掉 `~/.claude/settings.json` 里的手工 hook 配置。
 
 agent 等待回复较久，调大客户端工具超时（默认 30s 会提前砍掉调用）：
 
@@ -96,19 +102,15 @@ OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_
 
 ## 多设备标注来源（可选）
 
-一个 token 多个设备用，接入时加 `X-Client-Name` 请求头标注来源，卡片标题显示 `🤖 laptop 需要你的决策`：
-
-```bash
-claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
-  --header "Authorization: Bearer <TOKEN>" \
-  --header "X-Client-Name: laptop"
-```
+一个 token 多个设备用，安装插件时配 `client_name`（如 `laptop`），卡片标题显示 `🤖 laptop 需要你的决策`；手动接入则加 `X-Client-Name` 请求头，效果相同。
 
 开放性问题回复按**引用**精确路由；多条并行且没带引用时不猜，回红色提示卡要求引用对应消息。
 
-## Claude Code hook 通知（可选）
+## 手机通知与远程授权
 
-在 `~/.claude/settings.json` 配置 HTTP hook（`type: "http"`），agent 完成任务或需要你时推消息到手机：
+装了上面的插件就自带全部 hook（`Stop` / `Notification` / `SessionEnd` / `PermissionRequest`），无需手动配置；等待时长用 `--config timeout_seconds=1800` 调整，或在 `/plugin` 插件配置里改。
+
+不想用插件的，也可以手动在 `~/.claude/settings.json` 配 HTTP hook（`type: "http"`），agent 完成任务或需要你时推消息到手机：
 
 ```json
 {
@@ -152,5 +154,7 @@ npm run build   # tsc 类型检查 + 编译到 dist/
 npm test        # lint + build + 纯逻辑自检 (pending 生命周期/匹配规则/卡片构造, 跑 dist 产物)
 npm start       # node dist/server.js
 ```
+
+插件在 `plugin/`（含 marketplace 清单），本地试装：`claude plugin marketplace add . && claude plugin install agent-remote@agent-remote`；改完 `plugin/` 重装生效。
 
 MIT License.

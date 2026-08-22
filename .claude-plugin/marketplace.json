@@ -1,0 +1,12 @@
+{
+  "name": "agent-remote",
+  "description": "agent-remote 官方插件源: 飞书远程操控 Claude Code",
+  "owner": { "name": "emonq" },
+  "plugins": [
+    {
+      "name": "agent-remote",
+      "description": "把 agent 的问题推到手机(飞书/Lark), 阻塞等待回复; 任务完成通知 + 手机远程授权",
+      "source": "./plugin"
+    }
+  ]
+}
