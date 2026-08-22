@@ -12,9 +12,24 @@ Agent ◀──answer──────── 本服务 ◀──WS 长连接─
 
 两种部署形态：**单用户**（一个 token 直接用）和**多用户**（OIDC SSO 登录、每用户 token、飞书绑定、事件历史、网页管理台）。
 
-## 飞书侧配置（一次性）
+## 快速开始（扫码一键创建并绑定）
 
-1. [飞书开放平台](https://open.feishu.cn) / [Lark](https://open.larksuite.com) → 创建**企业自建应用**，拿到 `App ID` / `App Secret`
+不用去开发者后台手动建应用——服务启动后打开引导页，飞书扫码确认即可：自动创建企业自建应用、开通机器人能力和所需权限/事件、绑定你的飞书账号。
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+docker compose logs agent-remote | grep setup   # 拿到带 key 的引导地址
+# 浏览器打开 http://127.0.0.1:3000/setup?key=xxx，用飞书扫码 → 确认创建 → 完成
+```
+
+裸跑同理：`npm install && npm start`，日志里会打印 `/setup?key=...` 地址。凭据存在 SQLite（`data` 卷），重启不丢。单用户模式扫完即全部就绪；多用户模式各账号再到网页生成绑定码绑定个人飞书。
+
+> 扫码后若机器人收不到消息（回复无响应），去开发者后台检查**事件与回调 → 订阅方式**是否为「使用长连接接收事件」——这是唯一无法通过扫码流程预置的配置。
+
+## 手动配置飞书（可选，替代扫码）
+
+1. [飞书开放平台](https://open.feishu.cn) / [Lark](https://open.larksuite.com) → 创建**企业自建应用**，把 `App ID` / `App Secret` 填入 `.env`
 2. **应用能力 → 机器人**：启用
 3. **权限管理**开通：
    - `im:message:send_as_bot` — 发送卡片
@@ -23,19 +38,17 @@ Agent ◀──answer──────── 本服务 ◀──WS 长连接─
    - `im:chat`（可选）
 4. **事件与回调 → 事件配置 → 使用长连接接收事件**，添加事件：`接收消息 im.message.receive_v1`
 5. **发布新版本并通过审批**——权限变更必须走版本发布才生效，最容易漏的一步
-6. 与机器人发起一次对话，从事件日志拿到你的 `open_id`（`ou_` 开头）填入 env
 
 ## 运行
 
 ```bash
-cp .env.example .env   # 填入上述配置; 国际版 Lark 设 FEISHU_DOMAIN=lark
 docker compose up -d --build
 # 或裸跑: npm install && npm start
 ```
 
 ## 接给 Claude Code
 
-单用户模式用 env 里的 `MCP_TOKEN`；多用户模式在网页上拿自己的 token：
+token 从哪拿：多用户在网页登录后查看自己的 token；单用户看 env 的 `MCP_TOKEN`（没配的话在管理页生成）。
 
 ```bash
 claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
@@ -67,7 +80,7 @@ export MCP_TOOL_TIMEOUT=1200000   # 20 分钟, 单位 ms
 
 ## 多用户模式（可选）
 
-单用户模式只填 `MCP_TOKEN` + `FEISHU_USER_OPEN_ID`。要多用户（SSO 登录、每用户 token、事件历史）改填：
+单用户模式零必填项（token 网页生成，飞书走扫码绑定）。要多用户（SSO 登录、每用户 token、事件历史）在 `.env` 改填：
 
 ```
 OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_SECRET
@@ -131,8 +144,13 @@ claude mcp add -s user -t http agent-remote http://127.0.0.1:3000/mcp \
 
 ## 开发
 
+TypeScript 源码在 `src/`，`tsc` 编译到 `dist/` 运行；前端脚本独立在 `public/*.js`（ESLint 覆盖）。
+
 ```bash
-npm test   # 纯逻辑自检: pending 生命周期 / 匹配规则 / 卡片构造
+npm run lint    # ESLint: 未定义变量/未使用声明 (src TS + public JS)
+npm run build   # tsc 类型检查 + 编译到 dist/
+npm test        # lint + build + 纯逻辑自检 (pending 生命周期/匹配规则/卡片构造, 跑 dist 产物)
+npm start       # node dist/server.js
 ```
 
 MIT License.

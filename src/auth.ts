@@ -8,40 +8,51 @@ const CFG = () => ({
   redirectUri: process.env.OIDC_REDIRECT_URI,  // 如 https://svc.example.com/auth/callback
 });
 
-export function oidcConfigured() {
+export function oidcConfigured(): boolean {
   const { issuer, clientId, clientSecret, redirectUri } = CFG();
   return Boolean(issuer && clientId && clientSecret && redirectUri);
 }
 
-let discovery = null; // issuer 元数据缓存 (含 endpoints/jwks)
-async function discover() {
+// OIDC 发现文档 (只建模用到的端点; 其余字段透传)
+interface OIDCDiscovery {
+  issuer: string;
+  authorization_endpoint: string;
+  token_endpoint: string;
+  jwks_uri?: string;
+  [key: string]: unknown;
+}
+
+let discovery: OIDCDiscovery | null = null; // issuer 元数据缓存 (含 endpoints/jwks)
+async function discover(): Promise<OIDCDiscovery> {
   if (discovery) return discovery;
-  const res = await fetch(`${CFG().issuer.replace(/\/+$/, '')}/.well-known/openid-configuration`);
+  const res = await fetch(`${CFG().issuer!.replace(/\/+$/, '')}/.well-known/openid-configuration`);
   if (!res.ok) throw new Error(`OIDC discovery failed: ${res.status}`);
-  discovery = await res.json();
-  return discovery;
+  discovery = await res.json() as OIDCDiscovery;
+  return discovery!;
 }
 
 // id_token 只用于拿 sub/name — code flow + client_secret 换来的 token, 信任 IdP 的 TLS,
 // 不做签名校验 (要做时用 discovery.jwks_uri 验 RS256)。
-async function exchangeCode(code) {
+async function exchangeCode(code: string): Promise<{ sub: string; name: string }> {
   const { clientId, clientSecret, redirectUri } = CFG();
   const d = await discover();
   const res = await fetch(d.token_endpoint, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri, client_id: clientId, client_secret: clientSecret }),
+    body: new URLSearchParams({ grant_type: 'authorization_code', code, redirect_uri: redirectUri!, client_id: clientId!, client_secret: clientSecret! }),
   });
   if (!res.ok) throw new Error(`token exchange failed: ${res.status} ${await res.text()}`);
-  const claims = JSON.parse(Buffer.from((await res.json()).id_token.split('.')[1], 'base64url').toString());
+  const claims = JSON.parse(Buffer.from(((await res.json()) as { id_token: string }).id_token.split('.')[1], 'base64url').toString()) as {
+    sub: string; name?: string; preferred_username?: string; email?: string;
+  };
   return { sub: claims.sub, name: claims.name || claims.preferred_username || claims.email || claims.sub };
 }
 
-export function loginUrl(state) {
+export function loginUrl(state: string): Promise<string> {
   const { clientId, redirectUri } = CFG();
   return discover().then((d) =>
     `${d.authorization_endpoint}?${new URLSearchParams({
-      response_type: 'code', client_id: clientId, redirect_uri: redirectUri,
+      response_type: 'code', client_id: clientId!, redirect_uri: redirectUri!,
       scope: 'openid profile', state,
     })}`);
 }
@@ -52,11 +63,15 @@ export const handleCallback = exchangeCode;
 const sessionKey = () => process.env.SESSION_SECRET || 'ponytail: dev 默认, 生产必换';
 
 // 无状态 cookie 无法服务端注销 — 用递增版本号: bump 后旧 cookie 全部失效 (内存, 重启即全部失效, 可接受)
-const sessionVersions = new Map(); // userId -> version
-export function bumpSessionVersion(userId) { sessionVersions.set(userId, (sessionVersions.get(userId) ?? 0) + 1); }
-export function currentSessionVersion(userId) { return sessionVersions.get(userId) ?? 0; }
+const sessionVersions = new Map<string, number>(); // userId -> version
+export function bumpSessionVersion(userId: string): void {
+  sessionVersions.set(userId, (sessionVersions.get(userId) ?? 0) + 1);
+}
+export function currentSessionVersion(userId: string): number {
+  return sessionVersions.get(userId) ?? 0;
+}
 
-export function signSession(userId, days = 30) {
+export function signSession(userId: string, days = 30): string {
   const exp = Date.now() + days * 86400_000;
   const v = currentSessionVersion(userId);
   const body = `${userId}.${exp}.${v}`;
@@ -64,13 +79,13 @@ export function signSession(userId, days = 30) {
   return `${body}.${mac}`;
 }
 
-export function verifySession(cookie) {
+export function verifySession(cookie?: string): string | null {
   if (!cookie) return null;
   const parts = cookie.split('.');
   if (parts.length !== 4) return null;
   const [userId, exp, v, mac] = parts;
   const expect = crypto.createHmac('sha256', sessionKey()).update(`${userId}.${exp}.${v}`).digest('base64url');
-  if (!crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
+  if (mac.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(mac), Buffer.from(expect))) return null;
   if (Number(exp) < Date.now()) return null;
   if (Number(v) !== currentSessionVersion(userId)) return null; // 已注销
   return userId;
