@@ -85,6 +85,7 @@ describe('卡片构造', () => {
     assert.ok(/需要权限确认/.test(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).body.elements[0].content));
     assert.equal(hookCard({ hook_event_name: 'SessionEnd' }).header.template, 'grey');
     assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).body.elements[0].content));
+    assert.equal(hookCard({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }), null, 'idle_prompt 不推送');
     assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
     assert.equal(hookCard({}), null);
   });

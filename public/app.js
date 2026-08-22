@@ -59,42 +59,35 @@ async function main() {
   };
   renderCfg();
 
-  // 账号 (两种模式都有)
-  app.append($(`
-    <div class="card">
-      <h2>账号</h2>
-      <div class="row">
-        <strong>${esc(me.name)}</strong>
-        ${me.bound
-          ? '<span class="chip ok">✓ 飞书已绑定</span>'
-          : '<span class="chip warn">未绑定飞书</span>'}
-      </div>
-    </div>`));
-
-  // 飞书绑定: 未绑定→生成绑定码; 已绑定→解绑 (单/多用户同一套 /bind 流程)
-  const bindCard = $('<div class="card"><h2>飞书绑定</h2><div class="bind"></div></div>');
-  app.append(bindCard);
-  const renderBind = (bound) => {
-    const el = bindCard.querySelector('.bind');
+  // 账号 + 飞书绑定: 状态与操作同源, 合并一张卡 (未绑定→生成绑定码; 已绑定→可解绑)
+  const acctCard = $('<div class="card"><h2>账号</h2><div class="acct"></div></div>');
+  app.append(acctCard);
+  const renderAcct = (bound) => {
+    const el = acctCard.querySelector('.acct');
+    el.innerHTML = `<div class="row"><div><strong>${esc(me.name)}</strong>&nbsp;&nbsp;${
+        bound ? '<span class="chip ok">✓ 飞书已绑定</span>' : '<span class="chip warn">未绑定飞书</span>'
+      }</div><span class="act"></span></div><div class="detail"></div>`;
+    const act = el.querySelector('.act');
     if (bound) {
-      el.innerHTML = `<div class="row"><div><span class="chip ok">✓ 已绑定</span> <span class="muted">决策消息会推送到你的飞书</span></div>
-        <button id="unbind" class="danger">解绑</button></div>`;
-      el.querySelector('#unbind').onclick = async () => {
+      act.innerHTML = '<button id="unbind" class="danger">解绑</button>';
+      act.querySelector('#unbind').onclick = async () => {
         if (!confirm('解绑后 agent 的提问将无法推送给你，继续？')) return;
         await fetch(api('/api/unbind'), { method: 'POST' });
         location.reload();
       };
       return;
     }
-    el.innerHTML = `<div class="row"><div class="muted">生成绑定码，在飞书给机器人发送即可绑定你的账号</div><button id="bind" class="primary">生成绑定码</button></div>`;
-    el.querySelector('#bind').onclick = async () => {
+    act.innerHTML = '<button id="bind" class="primary">生成绑定码</button>';
+    act.querySelector('#bind').onclick = async () => {
       const r = await fetch(api('/api/bind-code'), { method: 'POST' }).then((x) => x.json());
       if (r.error) { alert(r.error); return; }
-      el.innerHTML = `<div>在飞书给机器人发&nbsp;<code>/bind ${esc(r.code)}</code></div>
-         <div class="muted" style="margin-top:.4rem">10 分钟内有效，发送后自动完成绑定 — <a href="/" onclick="location.reload();return false">刷新页面查看绑定状态</a></div>`;
+      act.innerHTML = '';
+      el.querySelector('.detail').innerHTML =
+        `<div>在飞书给机器人发&nbsp;<code>/bind ${esc(r.code)}</code></div>
+         <div class="muted" style="margin-top:.4rem">10 分钟内有效，发送后自动完成绑定 — <a href="/" onclick="location.reload();return false">刷新查看绑定状态</a></div>`;
     };
   };
-  renderBind(me.bound);
+  renderAcct(me.bound);
 
   // token: 默认打码, 可显示/复制; env 配置 MCP_TOKEN 时只读 (禁重置), 否则可网页生成/重置
   const tokenCard = $('<div class="card"><h2>API Token</h2><div class="tok"><div class="muted">加载中…</div></div></div>');
@@ -106,7 +99,11 @@ async function main() {
         <span><button id="toggle">${shown ? '隐藏' : '显示'}</button> <button id="copy">复制</button>${locked ? '' : ' <button id="rot" class="danger">重置</button>'}</span></div>
       <div class="muted" style="margin-top:.4rem">用于 MCP / hook 的 Bearer 认证${locked ? '；来自环境变量 MCP_TOKEN，改 .env 后重启生效' : '，重置后旧 token 立即失效'}</div>`;
     el.querySelector('#toggle').onclick = () => renderToken(t, !shown, locked);
-    el.querySelector('#copy').onclick = () => navigator.clipboard.writeText(t);
+    el.querySelector('#copy').onclick = async (e) => {
+      await navigator.clipboard.writeText(t);
+      e.target.textContent = '已复制';
+      setTimeout(() => { e.target.textContent = '复制'; }, 1200);
+    };
     const rot = el.querySelector('#rot');
     if (rot) rot.onclick = async () => {
       if (!confirm('重置后所有使用旧 token 的客户端都会失效，继续？')) return;

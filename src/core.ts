@@ -95,6 +95,7 @@ export interface CardV2 {
 // Claude Code hook 事件载荷 (非飞书; Claude Code 侧定义, 这里只建模用到的字段)
 export interface ClaudeHook {
   hook_event_name?: string;
+  notification_type?: string;
   cwd?: string;
   message?: string;
   reason?: string;
@@ -144,6 +145,7 @@ export function resolvedCard(question: string, answer: string | null | undefined
 
 // Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
 export function hookCard(hook: ClaudeHook = {}): Card | null {
+  if (hook.hook_event_name === 'Notification' && hook.notification_type === 'idle_prompt') return null; // 空闲提醒不推送
   const dir = hook.cwd ? String(hook.cwd).replace(/\/+$/, '').split('/').pop()! : '';
   const where = dir ? ` · ${dir}` : '';
   const m: Record<string, { icon: string; title: string; color: CardTemplate; body: string } | undefined> = {
