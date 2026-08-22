@@ -1,9 +1,13 @@
 {
   "name": "agent-remote",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "main": "dist/server.js",
   "scripts": {
+    "syncver": "node -e \"const fs=require('fs'),f='plugin/.claude-plugin/plugin.json',j=JSON.parse(fs.readFileSync(f));j.version=require('./package.json').version;fs.writeFileSync(f,JSON.stringify(j,null,2)+'\\n')\"",
+    "prebuild": "npm run syncver",
+    "version": "npm run syncver && git add plugin/.claude-plugin/plugin.json",
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "eslint .",

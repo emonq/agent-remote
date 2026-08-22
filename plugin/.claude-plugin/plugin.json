@@ -3,11 +3,20 @@
   "displayName": "Agent Remote",
   "version": "1.0.0",
   "description": "把 agent 的问题推到手机(飞书/Lark), 阻塞等待回复; 任务完成/需要授权时推送通知, 手机上远程放行权限",
-  "author": { "name": "emonq" },
+  "author": {
+    "name": "emonq"
+  },
   "homepage": "https://github.com/emonq/agent-remote",
   "repository": "https://github.com/emonq/agent-remote",
   "license": "MIT",
-  "keywords": ["mcp", "feishu", "lark", "notification", "mobile", "remote"],
+  "keywords": [
+    "mcp",
+    "feishu",
+    "lark",
+    "notification",
+    "mobile",
+    "remote"
+  ],
   "userConfig": {
     "base_url": {
       "type": "string",
