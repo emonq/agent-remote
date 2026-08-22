@@ -1,6 +1,8 @@
 // SQLite 持久层: 用户(token/飞书绑定) + 事件流水 + 设置
 import Database from 'better-sqlite3';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface User {
   id: string;
@@ -17,7 +19,9 @@ export interface EventRow {
   created_at: number;
 }
 
-export const db = new Database(process.env.DB_PATH || 'data/agent-remote.db');
+const DB_PATH = process.env.DB_PATH || 'data/agent-remote.db';
+fs.mkdirSync(path.dirname(path.resolve(DB_PATH)), { recursive: true }); // 全新部署 (docker/新 clone) 没人建 data/
+export const db = new Database(DB_PATH);
 db.pragma('journal_mode = WAL');
 db.pragma('busy_timeout = 5000');
 db.exec(`
