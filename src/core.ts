@@ -149,9 +149,12 @@ export function resolvedCard(question: string, answer: string | null | undefined
   ]);
 }
 
+// 通知开关的粒度键: idle_prompt 是 Notification 的子类型, 拆出来单独控 (默认关, 见 db DEFAULT_OFF)
+export const notifyKeyOf = (h: ClaudeHook = {}): string =>
+  h.hook_event_name === 'Notification' && h.notification_type === 'idle_prompt' ? 'idle_prompt' : (h.hook_event_name ?? '');
+
 // Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
 export function hookCard(hook: ClaudeHook = {}): Card | null {
-  if (hook.hook_event_name === 'Notification' && hook.notification_type === 'idle_prompt') return null; // 空闲提醒不推送
   const dir = hook.cwd ? String(hook.cwd).replace(/\/+$/, '').split('/').pop()! : '';
   const where = dir ? ` · ${dir}` : '';
   const m: Record<string, { icon: string; title: string; color: CardTemplate; body: string } | undefined> = {

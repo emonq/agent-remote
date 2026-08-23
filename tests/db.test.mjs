@@ -18,3 +18,18 @@ describe('settings 存储', () => {
     assert.doesNotThrow(() => delSetting('k'), '重复删除无害');
   });
 });
+
+describe('通知开关', () => {
+  it('未设置按 DEFAULT_OFF(空闲提醒默认关); 存过则以存的全量为准; 非法输入按全开', async () => {
+    const { getNotifyOff, setNotifyOff } = await import('../dist/db.js');
+    assert.deepEqual(getNotifyOff('u1'), ['idle_prompt'], '未设置 = 空闲提醒默认关');
+    setNotifyOff('u1', ['Stop', 'SessionEnd']);
+    assert.deepEqual(getNotifyOff('u1'), ['Stop', 'SessionEnd']);
+    setNotifyOff('u1', []);
+    assert.deepEqual(getNotifyOff('u1'), [], '存过空数组 = 全开, 覆盖默认');
+    setNotifyOff('u1', 'garbage');
+    assert.deepEqual(getNotifyOff('u1'), [], '非数组按全开');
+    setNotifyOff('u1', [1, 'Notification']);
+    assert.deepEqual(getNotifyOff('u1'), ['Notification'], '非字符串项过滤');
+  });
+});

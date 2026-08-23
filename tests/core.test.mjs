@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import {
   pending, resolvePending, createPending, setMessageId, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
-  permissionCard, permissionHookResponse, fmtPermInput,
+  permissionCard, permissionHookResponse, fmtPermInput, notifyKeyOf,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, md, fileKind,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
@@ -94,7 +94,9 @@ describe('卡片构造', () => {
     assert.ok(/需要权限确认/.test(hookCard({ hook_event_name: 'Notification', message: '需要权限确认' }).body.elements[0].content));
     assert.equal(hookCard({ hook_event_name: 'SessionEnd' }).header.template, 'grey');
     assert.ok(/exit/.test(hookCard({ hook_event_name: 'SessionEnd' }).body.elements[0].content));
-    assert.equal(hookCard({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }), null, 'idle_prompt 不推送');
+    assert.ok(/Claude is waiting/.test(hookCard({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }).body.elements[0].content), 'idle_prompt 走 Notification 卡片, 推不推由开关决定');
+    assert.equal(notifyKeyOf({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }), 'idle_prompt', 'idle_prompt 是独立开关键');
+    assert.equal(notifyKeyOf({ hook_event_name: 'Notification', message: 'x' }), 'Notification');
     assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
     assert.equal(hookCard({}), null);
   });

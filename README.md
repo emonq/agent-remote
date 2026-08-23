@@ -107,6 +107,8 @@ OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_
 
 装了上面的插件就自带全部 hook（`Stop` / `Notification` / `SessionEnd` / `PermissionRequest`），无需手动配置；等待时长用 `--config timeout_seconds=1800` 调整，或在 `/plugin` 插件配置里改。推送卡片会显示这条时限（如 `⏳ 30 分钟内未处理将回落终端确认`），到点服务端与客户端同步收尾。
 
+网页「通知开关」可按事件关闭推送（含空闲提醒，默认关）；关掉「任务完成」「权限确认」后直接放行回落终端处理。
+
 不想用插件的，也可以手动在 `~/.claude/settings.json` 配 HTTP hook（`type: "http"`），agent 完成任务或需要你时推消息到手机：
 
 ```json

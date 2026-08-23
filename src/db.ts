@@ -103,3 +103,15 @@ export const setSetting = (key: string, value: unknown): void => {
 };
 export const delSetting = (key: string) =>
   db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+
+// 每用户通知开关: 只存关掉的事件名数组, 存 settings 表 notify:<userId>
+// 未设置过时按 DEFAULT_OFF (空闲提醒默认不推, 沿用旧硬编码行为); 存过则以存的全量为准
+const notifyKey = (userId: string): string => `notify:${userId}`;
+export const DEFAULT_OFF: string[] = ['idle_prompt'];
+export const getNotifyOff = (userId: string): string[] => {
+  const s = getSetting(notifyKey(userId));
+  if (s === undefined) return DEFAULT_OFF;
+  try { const v: unknown = JSON.parse(s); return Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string') : []; } catch { return []; }
+};
+export const setNotifyOff = (userId: string, off: unknown): void =>
+  setSetting(notifyKey(userId), JSON.stringify(Array.isArray(off) ? off.filter((k) => typeof k === 'string') : []));

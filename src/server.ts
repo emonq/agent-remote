@@ -12,7 +12,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import {
   pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText,
-  questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
+  questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, notifyKeyOf,
   permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
   resolveDomain,
@@ -21,7 +21,7 @@ import {
 import {
   upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken,
   bindFeishu, unbindFeishu, clearAllBindings, logEvent, listEvents,
-  getSetting, setSetting, delSetting,
+  getSetting, setSetting, delSetting, getNotifyOff, setNotifyOff,
   type User,
 } from './db.js';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.js';
@@ -301,11 +301,17 @@ app.get('/api/me', sessionAuth, (req: Request & { user?: User | null }, res: Res
       bound: Boolean(u.feishu_open_id),
       key_ok: keyOk(req.query.key),
       token_locked: Boolean(MCP_TOKEN), // env 配置的 token 只读展示, 网页不可重置
+      notify: getNotifyOff(u.id),
       events: listEvents(u.id, 30),
     });
   }
   if (!req.user) return res.status(401).json({ login: '/auth/login' });
-  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, app_configured: Boolean(appId && appSecret), events: listEvents(req.user.id, 30) });
+  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, app_configured: Boolean(appId && appSecret), notify: getNotifyOff(req.user.id), events: listEvents(req.user.id, 30) });
+});
+// 通知开关: body = 关掉的事件名数组 (缺省全开)
+app.post('/api/notify', userAuth, (req: Request & { user: User }, res: Response) => {
+  setNotifyOff(req.user.id, req.body);
+  res.json({ ok: true });
 });
 app.post('/api/rotate-token', userAuth, (req: Request & { user: User }, res: Response) => {
   if (!MULTIUSER && MCP_TOKEN) return res.status(403).json({ error: 'token 来自环境变量 MCP_TOKEN, 请改 .env 后重启' });
@@ -408,6 +414,8 @@ app.post('/file', rawBody, (req: Request, res: Response) => {
 app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: string }, res: Response) => {
   const h = req.body as ClaudeHook;
   const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+  // 网页关掉的事件直接放行/忽略: Stop=放行结束, PermissionRequest=不决策回落终端, 其余不推卡
+  if (getNotifyOff(req.user.id).includes(notifyKeyOf(h))) return res.json({ ok: true });
   // 客户端等待时限 (hook 命令把插件配置的 timeout_seconds 放进 X-Timeout-Seconds): 卡片展示 + 服务端兜底定时器
   const n = Number(req.headers['x-timeout-seconds']);
   const timeoutSec = Number.isFinite(n) && n > 0 ? n : 0;
