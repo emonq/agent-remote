@@ -4,6 +4,7 @@ RUN apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 COPY src ./src
+COPY plugin ./plugin # syncver (prebuild) 要读写 plugin/.claude-plugin/plugin.json
 RUN npm ci && npm run build && npm prune --omit=dev
 
 # 运行阶段: 直接复用构建阶段的 node_modules (已裁掉 dev), 不再跑 npm — 免工具链免二次下载
