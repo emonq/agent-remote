@@ -170,34 +170,44 @@ function newMcpServer(user: User, clientName = '', baseUrl: string = BASE_URL!):
   const mcp = new McpServer({ name: 'agent-remote', version: '0.3.0' });
   mcp.tool(
     'ask_user',
-    '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。options 提供候选项时用户可一键点选; 不提供则等待自由文本(用户需引用该消息回复)。超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
+    '需要用户决策时【优先】使用本工具, 而不是在对话中等待用户输入。发送问题到用户手机(飞书), 阻塞等待用户回复, 回复内容直接作为工具结果返回, 期间可继续做其他工作。默认不限时一直等; options 提供候选项时用户可一键点选; 不提供则等待自由文本(用户需引用该消息回复)。传了 timeout_minutes 才会超时, 超时返回 {"timeout": true}, 由 agent 自行决定默认行为。',
     {
       question: z.string().describe('要问的问题, 写清楚上下文和推荐选项'),
       options: z.array(z.string()).max(6).optional().describe('候选项, 建议不超过 4 个; 开放性问题(需要用户输入文字)不要传此参数'),
-      timeout_minutes: z.number().int().min(1).max(120).default(10).describe('等待用户回复的超时分钟数'),
+      timeout_minutes: z.number().int().min(1).max(120).optional().describe('最长等待分钟数; 不传则一直等到用户回复'),
     },
-    async ({ question, options, timeout_minutes }) => {
+    async ({ question, options, timeout_minutes }, extra) => {
       if (!user.feishu_open_id) return { content: [{ type: 'text', text: `用户 ${user.name} 尚未绑定飞书 (网页生成绑定码后在飞书发 /bind)` }], isError: true };
       let resolveFn!: (a: string | null | undefined) => void;
       const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
-      const id = createPending({ resolve: resolveFn, userId: user.id, options: options ?? null, question, source: clientName, timeoutMinutes: timeout_minutes });
+      const id = createPending({ resolve: resolveFn, userId: user.id, options: options ?? null, question, source: clientName, timeoutMinutes: timeout_minutes }); // 不传=不限时
       logEvent(user.id, 'ask', { question, options, source: clientName });
       let messageId: string | undefined;
       try {
-        messageId = await sendCard(questionCard({ id, question, options: options ?? null, source: clientName }), user.feishu_open_id);
+        messageId = await sendCard(questionCard({ id, question, options: options ?? null, source: clientName, timeoutSec: timeout_minutes && timeout_minutes * 60 }), user.feishu_open_id);
         setMessageId(id, messageId);
       } catch (e) {
         resolvePending(id, undefined);
         return { content: [{ type: 'text', text: `发送到飞书失败: ${(e as Error).message}` }], isError: true };
       }
-      const answer = await answerPromise;
-      if (answer === null) {
-        updateCard(messageId, resolvedCard(question, null, true, clientName)).catch(() => {});
-        logEvent(user.id, 'timeout', { question });
-        return { content: [{ type: 'text', text: JSON.stringify({ timeout: true }) }] };
+      // 心跳保活: 每 60s 发 progress 重置客户端空闲断开(HTTP 默认 5 分钟无字节即 abort); 客户端没带 token 就发不了
+      const token = (extra._meta as { progressToken?: string | number } | undefined)?.progressToken;
+      let beats = 0;
+      const beat = token === undefined ? null : setInterval(() => {
+        extra.sendNotification({ method: 'notifications/progress', params: { progressToken: token, progress: ++beats, message: '仍在等待手机回复' } }).catch(() => {});
+      }, 60_000);
+      try {
+        const answer = await answerPromise;
+        if (answer === null) {
+          updateCard(messageId, resolvedCard(question, null, true, clientName)).catch(() => {});
+          logEvent(user.id, 'timeout', { question });
+          return { content: [{ type: 'text', text: JSON.stringify({ timeout: true }) }] };
+        }
+        updateCard(messageId, resolvedCard(question, answer, false, clientName)).catch(() => {});
+        return { content: [{ type: 'text', text: JSON.stringify({ answer }) }] };
+      } finally {
+        if (beat) clearInterval(beat);
       }
-      updateCard(messageId, resolvedCard(question, answer, false, clientName)).catch(() => {});
-      return { content: [{ type: 'text', text: JSON.stringify({ answer }) }] };
     },
   );
   mcp.tool(
@@ -398,15 +408,18 @@ app.post('/file', rawBody, (req: Request, res: Response) => {
 app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: string }, res: Response) => {
   const h = req.body as ClaudeHook;
   const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+  // 客户端等待时限 (hook 命令把插件配置的 timeout_seconds 放进 X-Timeout-Seconds): 卡片展示 + 服务端兜底定时器
+  const n = Number(req.headers['x-timeout-seconds']);
+  const timeoutSec = Number.isFinite(n) && n > 0 ? n : 0;
   if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
     const question = `${h.tool_name} 权限请求: ${JSON.stringify(h.tool_input).slice(0, 500)}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
-    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: PERM_OPTIONS, question, timeoutMinutes: 24 * 60 }); // 兜底上限, 实际由连接断开决定
+    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: PERM_OPTIONS, question, timeoutMinutes: timeoutSec / 60 || 24 * 60 }); // 未传时限才用兜底上限
     logEvent(req.user.id, 'hook', { event: 'PermissionRequest', project: dir, tool: h.tool_name });
     res.on('close', () => resolvePending(id, undefined)); // 客户端超时/断开: 不决策, 回落终端确认
     try {
-      const messageId = await sendCard(permissionCard({ id, toolName: h.tool_name, toolInput: h.tool_input, dir }), req.user.feishu_open_id);
+      const messageId = await sendCard(permissionCard({ id, toolName: h.tool_name, toolInput: h.tool_input, dir, timeoutSec }), req.user.feishu_open_id);
       setMessageId(id, messageId);
       const answer = await answerPromise;
       if (answer == null) { // 超时/断连收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件
@@ -424,11 +437,11 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
     const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
-    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: 24 * 60 }); // 兜底上限, 实际由连接断开决定
+    const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: timeoutSec / 60 || 24 * 60 }); // 未传时限才用兜底上限
     logEvent(req.user.id, 'hook', { event: 'Stop', project: dir });
     res.on('close', () => resolvePending(id, undefined)); // 客户端超时/断开: 放行并清理 pending
     try {
-      const messageId = await sendCard(stopCard({ id, summary: question, dir }), req.user.feishu_open_id);
+      const messageId = await sendCard(stopCard({ id, summary: question, dir, timeoutSec }), req.user.feishu_open_id);
       setMessageId(id, messageId);
       const answer = await answerPromise;
       if (answer == null) { // 超时/断连收尾只在服务端做; 引用回复路径 WS handler 已翻卡+记事件

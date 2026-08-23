@@ -52,28 +52,25 @@ token 从哪拿：多用户在网页登录后查看自己的 token；单用户�
 
 ```bash
 claude plugin marketplace add emonq/agent-remote
-claude plugin install agent-remote@agent-remote --config token=<你的TOKEN>
+claude plugin install agent-remote@agent-remote --config base_url=<服务地址> --config token=<你的TOKEN>
 ```
 
-或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
+或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填服务地址和 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
 
-安装时可配（事后在 `/plugin` 插件配置里也能改）：`base_url` 服务地址（默认 `http://127.0.0.1:3000`）、`client_name` 多设备标注、`timeout_seconds` 等手机回复时长（默认 600 秒）。
+安装时可配（事后在 `/plugin` 插件配置里也能改）：`base_url` 服务地址（必填，如 `http://127.0.0.1:3000`）、`token`（必填）、`client_name` 多设备标注、`timeout_seconds` 等手机回复时长（默认 600 秒）。
 
 > 之前用手动方式接入的先删旧条目避免重复：`claude mcp remove agent-remote`，并清掉 `~/.claude/settings.json` 里的手工 hook 配置。
 
-agent 等待回复较久，调大客户端工具超时（默认 30s 会提前砍掉调用）：
-
-```bash
-export MCP_TOOL_TIMEOUT=1200000   # 20 分钟, 单位 ms
-```
+agent 等待回复较久？不用调客户端：`ask_user` **默认不限时**，服务端每 60 秒发一次 progress 心跳，既喂饱 Claude Code 的空闲检测（HTTP 默认 5 分钟无字节即断），也不会触发工具超时（未配 `MCP_TOOL_TIMEOUT` 时约 28 小时）。极旧客户端不发 progress token 时才需要自己兜底：`export CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT=0`。
 
 ## 工具
 
-**`ask_user(question, options?, timeout_minutes=10)`**
+**`ask_user(question, options?, timeout_minutes?)`**
 
 - 有 `options` → 手机上渲染按钮，点选即回
 - 无（开放性问题）→ 引用该消息回复文本
-- 超时 → 返回 `{"timeout": true}`，agent 自行决定默认行为
+- `timeout_minutes` 不传则一直等到用户回复；传了才会在到点返回 `{"timeout": true}`，agent 自行决定默认行为
+- 卡片会显示等待时限（如 `⏳ 10 分钟内回复有效`）；不限时不显示
 - 完成后卡片变绿（已回复）/ 灰色（超时）
 
 **`send_file(path)`**
@@ -108,7 +105,7 @@ OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_
 
 ## 手机通知与远程授权
 
-装了上面的插件就自带全部 hook（`Stop` / `Notification` / `SessionEnd` / `PermissionRequest`），无需手动配置；等待时长用 `--config timeout_seconds=1800` 调整，或在 `/plugin` 插件配置里改。
+装了上面的插件就自带全部 hook（`Stop` / `Notification` / `SessionEnd` / `PermissionRequest`），无需手动配置；等待时长用 `--config timeout_seconds=1800` 调整，或在 `/plugin` 插件配置里改。推送卡片会显示这条时限（如 `⏳ 30 分钟内未处理将回落终端确认`），到点服务端与客户端同步收尾。
 
 不想用插件的，也可以手动在 `~/.claude/settings.json` 配 HTTP hook（`type: "http"`），agent 完成任务或需要你时推消息到手机：
 

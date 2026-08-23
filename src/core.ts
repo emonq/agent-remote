@@ -8,7 +8,7 @@ export interface PendingItem {
   options: string[] | null;
   question: string;
   source?: string;
-  timer: NodeJS.Timeout;
+  timer: NodeJS.Timeout | null; // null = 不限时
 }
 
 // decisionId -> pending
@@ -17,24 +17,25 @@ export const pending = new Map<string, PendingItem>();
 export function resolvePending(id: string, answer: string | null | undefined): boolean {
   const p = pending.get(id);
   if (!p) return false;
-  clearTimeout(p.timer);
+  if (p.timer) clearTimeout(p.timer);
   pending.delete(id);
   p.resolve(answer);
   return true;
 }
 
 // id 需先于卡片发送生成(按钮 value 要带), messageId 发送后才知道 — 所以两步注册
+// timeoutMinutes 缺省 = 不限时, 只能等显式 resolve
 export function createPending({ resolve, userId, options, question, source, timeoutMinutes, onTimeout }: {
   resolve: (answer: string | null | undefined) => void;
   userId: string;
   options: string[] | null;
   question: string;
   source?: string;
-  timeoutMinutes: number;
+  timeoutMinutes?: number;
   onTimeout?: () => void;
 }): string {
   const id = crypto.randomUUID();
-  const timer = setTimeout(() => {
+  const timer = timeoutMinutes === undefined ? null : setTimeout(() => {
     pending.delete(id);
     onTimeout?.();
     resolve(null); // null = 超时
@@ -120,8 +121,11 @@ export const mkBtn = (label: string, value: CardCallbackValue, primary = false):
   behaviors: [{ type: 'callback', value }],
 });
 
-export function questionCard({ id, question, options, source }: {
-  id: string; question: string; options: string[] | null; source?: string;
+// 秒 → 人话时长 (卡片上的等待时限提示)
+export const fmtDur = (sec: number): string => (sec >= 60 ? `${Math.round(sec / 60)} 分钟` : `${sec} 秒`);
+
+export function questionCard({ id, question, options, source, timeoutSec }: {
+  id: string; question: string; options: string[] | null; source?: string; timeoutSec?: number;
 }): Card {
   const elements: CardElement[] = [{ tag: 'markdown', content: md(question) }, { tag: 'hr' }];
   if (options?.length) {
@@ -130,6 +134,8 @@ export function questionCard({ id, question, options, source }: {
   } else {
     elements.push({ tag: 'markdown', content: '*长按引用本条消息回复你的答案*' });
   }
+  // 老客户端不带 timeoutSec 就不显示
+  if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内回复有效，超时由 agent 自行兜底` });
   const title = `🤖 ${source ? `${source} 需要你的决策` : 'Agent 需要你的决策'}`;
   return mkCard('orange', title, elements);
 }
@@ -161,14 +167,16 @@ export function hookCard(hook: ClaudeHook = {}): Card | null {
 // Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
 export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作为应答哨兵: 收到它 = 放行结束
 
-export function stopCard({ id, summary, dir }: { id: string; summary: string; dir: string }): Card {
+export function stopCard({ id, summary, dir, timeoutSec }: { id: string; summary: string; dir: string; timeoutSec?: number }): Card {
   const where = dir ? ` · ${dir}` : '';
-  return mkCard('green', `✅ 任务完成${where}`, [
+  const elements: CardElement[] = [
     { tag: 'markdown', content: md(summary) },
     { tag: 'hr' },
     { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
     mkBtn(STOP_DONE, { d: id, a: STOP_DONE }),
-  ]);
+  ];
+  if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内未回复自动结束` });
+  return mkCard('green', `✅ 任务完成${where}`, elements);
 }
 
 // Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败/点结束) -> 放行结束
@@ -196,15 +204,17 @@ export function fmtPermInput(toolInput: Record<string, unknown> = {}): string {
   return s;
 }
 
-export function permissionCard({ id, toolName, toolInput, dir }: {
-  id: string; toolName: string; toolInput: Record<string, unknown>; dir: string;
+export function permissionCard({ id, toolName, toolInput, dir, timeoutSec }: {
+  id: string; toolName: string; toolInput: Record<string, unknown>; dir: string; timeoutSec?: number;
 }): Card {
   const where = dir ? ` · ${dir}` : '';
-  return mkCard('orange', `🔐 权限确认${where}`, [
+  const elements: CardElement[] = [
     { tag: 'markdown', content: `**${toolName}** 请求权限:\n\`\`\`\n${fmtPermInput(toolInput)}\n\`\`\`` },
     { tag: 'hr' },
     ...PERM_OPTIONS.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)),
-  ]);
+  ];
+  if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内未处理将回落终端确认` });
+  return mkCard('orange', `🔐 权限确认${where}`, elements);
 }
 
 // PermissionRequest 应答: 允许/拒绝/允许+切 auto; 无应答(超时/断连/发送失败) -> 不决策, 回落终端确认

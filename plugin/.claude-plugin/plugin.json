@@ -1,7 +1,7 @@
 {
   "name": "agent-remote",
   "displayName": "Agent Remote",
-  "version": "1.0.0",
+  "version": "1.2.0",
   "description": "把 agent 的问题推到手机(飞书/Lark), 阻塞等待回复; 任务完成/需要授权时推送通知, 手机上远程放行权限",
   "author": {
     "name": "emonq"
@@ -21,8 +21,8 @@
     "base_url": {
       "type": "string",
       "title": "服务地址",
-      "description": "agent-remote 服务地址, 如 http://127.0.0.1:3000",
-      "default": "http://127.0.0.1:3000"
+      "description": "agent-remote 服务地址, 如 https://ar.example.com 或本机 http://127.0.0.1:3000",
+      "required": true
     },
     "token": {
       "type": "string",
@@ -39,8 +39,8 @@
     },
     "timeout_seconds": {
       "type": "number",
-      "title": "等待手机回复时长(秒)",
-      "description": "Stop/PermissionRequest 等你手机操作的最长时间, 到时回落终端照常处理",
+      "title": "hook 等待手机回复时长(秒)",
+      "description": "Stop/PermissionRequest hook 等你手机操作的最长时间, 到时回落终端照常处理; MCP 的 ask_user 不受此限(默认不限时)",
       "default": 600,
       "min": 10
     }

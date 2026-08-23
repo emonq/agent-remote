@@ -54,6 +54,15 @@ describe('pending 生命周期', () => {
     resolvePending(id, 'clean'); // 清理, 别泄漏给后面的用例
   });
 
+  it('不限时: timeoutMinutes 缺省无定时器, 只能显式 resolve', () => {
+    let resolved;
+    const id = createPending({ resolve: (a) => { resolved = a; }, userId: 'u8', options: null, question: 'Q?' });
+    assert.equal(pending.get(id).timer, null);
+    assert.equal(resolved, undefined, '没有定时器不会自动 resolve');
+    assert.ok(resolvePending(id, '来了'));
+    assert.equal(resolved, '来了');
+  });
+
   it('超时: resolve(null)', async () => {
     let resolved;
     const id = createPending({ resolve: (a) => { resolved = a; }, userId: 'u1', options: null, question: 'Q?', timeoutMinutes: 1 });
@@ -115,6 +124,19 @@ describe('卡片构造', () => {
     assert.ok(card.body.elements.some((e) => e.tag === 'markdown' && /引用/.test(e.content)), '提示引用回复');
     const done = resolvedCard('Q', 'ok', false, 'ci-runner');
     assert.ok(/ci-runner/.test(done.header.title.content));
+  });
+
+  it('timeoutSec: 三种卡片显示等待时限, 不传不显示', () => {
+    for (const [withT, noT] of [
+      [questionCard({ id: 'D-t1', question: 'Q', options: null, timeoutSec: 600 }), questionCard({ id: 'D-t1', question: 'Q', options: null })],
+      [stopCard({ id: 'D-t2', summary: 'S', dir: '', timeoutSec: 45 }), stopCard({ id: 'D-t2', summary: 'S', dir: '' })],
+      [permissionCard({ id: 'D-t3', toolName: 'Bash', toolInput: {}, dir: '', timeoutSec: 1800 }), permissionCard({ id: 'D-t3', toolName: 'Bash', toolInput: {}, dir: '' })],
+    ]) {
+      assert.ok(withT.body.elements.some((e) => e.tag === 'markdown' && e.content.includes('⏳')), '带时限提示');
+      assert.ok(!noT.body.elements.some((e) => e.tag === 'markdown' && e.content.includes('⏳')), '老客户端不带时限');
+    }
+    assert.ok(questionCard({ id: 'd', question: 'Q', options: null, timeoutSec: 600 }).body.elements.some((e) => /10 分钟/.test(e.content ?? '')), '600s 显示分钟');
+    assert.ok(stopCard({ id: 'd', summary: 'S', dir: '', timeoutSec: 45 }).body.elements.some((e) => /45 秒/.test(e.content ?? '')), '不足一分钟显示秒');
   });
 
   it('Stop hook: 卡片带结果/引用提示/结束按钮, 应答格式', () => {
