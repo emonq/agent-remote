@@ -198,10 +198,10 @@ async function main() {
     tokenCard.querySelector('.tok').innerHTML = '<div class="muted">🔒 解锁后可见</div>';
   }
 
-  // 通知开关: 关掉的事件不再推飞书; 任务完成/权限确认关闭后直接放行, 回落终端处理
-  const NOTIFY_LABELS = { Stop: '任务完成（可续跑）', Notification: '需要你注意', SessionEnd: '会话结束', PermissionRequest: '权限确认', idle_prompt: '空闲提醒' };
+  // 通知开关: 关掉的事件不再推飞书; 交互事件关闭后直接放行, 回落终端处理
+  const NOTIFY_LABELS = { Stop: '任务完成（可续跑）', AskUserQuestion: 'Claude 提问（可远程回答）', Notification: '需要你注意', SessionEnd: '会话结束', PermissionRequest: '权限确认', idle_prompt: '空闲提醒' };
   const off = new Set(me.notify || []);
-  const nfCard = $('<div class="card"><h2>通知开关</h2><div class="muted" style="margin-bottom:.4rem">关掉的不再推送；「任务完成」「权限确认」关闭后直接放行，回落终端处理</div><div class="row" id="nfs" style="flex-wrap:wrap;gap:.6rem"></div></div>');
+  const nfCard = $('<div class="card"><h2>通知开关</h2><div class="muted" style="margin-bottom:.4rem">关掉的不再推送；「Claude 提问」「任务完成」「权限确认」关闭后直接放行，回落终端处理</div><div class="row" id="nfs" style="flex-wrap:wrap;gap:.6rem"></div></div>');
   app.append(nfCard);
   const nfs = nfCard.querySelector('#nfs');
   for (const [k, label] of Object.entries(NOTIFY_LABELS)) {

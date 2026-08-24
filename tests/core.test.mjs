@@ -5,8 +5,9 @@ import {
   pending, resolvePending, createPending, setMessageId, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
+  askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   fmtPermInput, notifyKeyOf,
-  PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, md, fileKind,
+  PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, ASK_USER_SUBMIT, md, fileKind,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
 
@@ -98,6 +99,7 @@ describe('卡片构造', () => {
     assert.ok(/Claude is waiting/.test(hookCard({ hook_event_name: 'Notification', notification_type: 'idle_prompt', message: 'Claude is waiting for your input' }).body.elements[0].content), 'idle_prompt 走 Notification 卡片, 推不推由开关决定');
     assert.equal(notifyKeyOf({ hook_event_name: 'Notification', notification_type: 'idle_prompt' }), 'idle_prompt', 'idle_prompt 是独立开关键');
     assert.equal(notifyKeyOf({ hook_event_name: 'Notification', message: 'x' }), 'Notification');
+    assert.equal(notifyKeyOf({ hook_event_name: 'PermissionRequest', tool_name: 'AskUserQuestion' }), 'AskUserQuestion', '远程问答不混入权限开关');
     assert.equal(hookCard({ hook_event_name: 'PreToolUse' }), null, '未监听的事件忽略');
     assert.equal(hookCard({}), null);
   });
@@ -191,6 +193,63 @@ describe('卡片构造', () => {
     assert.equal(fmtPermInput({ file_path: '/a/b.ts' }), '/a/b.ts', '文件工具显示路径');
     assert.match(fmtPermInput({ query: 'x'.repeat(2000) }), /\.\.\.$/, '超长截断');
     assert.ok(fmtPermInput({}).length > 0, '空输入兜底 JSON');
+  });
+
+  it('AskUserQuestion hook: 完整展示、支持多题/多选并通过 updatedInput 回填', () => {
+    const longDescription = `${'传输方式说明'.repeat(180)}-末尾仍可见`;
+    const toolInput = {
+      questions: [
+        {
+          question: 'MCP 配置的作用范围是什么？',
+          header: '配置范围',
+          options: [
+            { label: '全局共享 (推荐)', description: longDescription },
+            { label: '每用户独立', description: '按 user_id 隔离' },
+          ],
+          multiSelect: false,
+        },
+        {
+          question: '需要支持哪些传输方式？',
+          header: '传输类型',
+          options: [{ label: 'SSE' }, { label: 'stdio' }],
+          multiSelect: true,
+        },
+      ],
+    };
+    const prompts = parseAskUserQuestions(toolInput);
+    assert.equal(prompts.length, 2);
+    assert.equal(prompts[0].options[0].description, longDescription, '解析时不截断 description');
+
+    const single = askUserQuestionCard({ id: 'ask-1', prompt: prompts[0], index: 0, total: 2, dir: 'agent-remote', timeoutSec: 600 });
+    assert.match(single.header.title.content, /1\/2.*agent-remote/);
+    assert.ok(single.body.elements.some((e) => e.tag === 'markdown' && e.content.endsWith('末尾仍可见')), '飞书卡片保留完整选项说明');
+    assert.equal(single.body.elements.filter((e) => e.tag === 'button').length, 2);
+
+    const multi = askUserQuestionCard({ id: 'ask-2', prompt: prompts[1], index: 1, total: 2, selected: ['SSE'] });
+    const buttons = multi.body.elements.filter((e) => e.tag === 'button');
+    assert.equal(buttons.length, 3, '两个选项加一个提交按钮');
+    assert.equal(buttons[0].behaviors[0].value.op, 'toggle');
+    assert.match(buttons[0].text.content, /☑/);
+    assert.equal(buttons.at(-1).behaviors[0].value.a, ASK_USER_SUBMIT);
+    assert.equal(buttons.at(-1).behaviors[0].value.op, 'submit');
+
+    const answers = {
+      'MCP 配置的作用范围是什么？': '全局共享 (推荐)',
+      '需要支持哪些传输方式？': 'SSE, stdio',
+    };
+    const permission = askUserQuestionHookResponse('PermissionRequest', toolInput, answers);
+    assert.equal(permission.hookSpecificOutput.decision.behavior, 'allow');
+    assert.deepEqual(permission.hookSpecificOutput.decision.updatedInput.questions, toolInput.questions, '原 questions 原样回传');
+    assert.deepEqual(permission.hookSpecificOutput.decision.updatedInput.answers, answers);
+    const preTool = askUserQuestionHookResponse('PreToolUse', toolInput, answers);
+    assert.equal(preTool.hookSpecificOutput.permissionDecision, 'allow');
+    assert.deepEqual(preTool.hookSpecificOutput.updatedInput.answers, answers);
+  });
+
+  it('AskUserQuestion 输入异常时拒绝远程解析', () => {
+    assert.deepEqual(parseAskUserQuestions({}), []);
+    assert.deepEqual(parseAskUserQuestions({ questions: [{ question: 'Q', options: [{ label: 1 }] }] }), []);
+    assert.deepEqual(parseAskUserQuestions({ questions: Array.from({ length: 5 }, () => ({ question: 'Q', options: [] })) }), []);
   });
 
   it('Codex hook: 权限只允许 allow/deny，Stop 用 block/reason 续跑', () => {

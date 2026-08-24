@@ -1,6 +1,27 @@
 // 纯逻辑: pending 决策管理 + 卡片构造 (无副作用, 供 server 和 test 导入)
 import crypto from 'node:crypto';
 
+export interface AskUserOption {
+  label: string;
+  description?: string;
+}
+
+export interface AskUserPrompt {
+  question: string;
+  header?: string;
+  options: AskUserOption[];
+  multiSelect: boolean;
+}
+
+export interface AskUserPendingContext {
+  prompt: AskUserPrompt;
+  index: number;
+  total: number;
+  dir?: string;
+  timeoutSec?: number;
+  selected: string[];
+}
+
 export interface PendingItem {
   resolve: (answer: string | null | undefined) => void;
   userId: string;
@@ -8,6 +29,7 @@ export interface PendingItem {
   options: string[] | null;
   question: string;
   source?: string;
+  askUser?: AskUserPendingContext;
   timer: NodeJS.Timeout | null; // null = 不限时
 }
 
@@ -25,12 +47,13 @@ export function resolvePending(id: string, answer: string | null | undefined): b
 
 // id 需先于卡片发送生成(按钮 value 要带), messageId 发送后才知道 — 所以两步注册
 // timeoutMinutes 缺省 = 不限时, 只能等显式 resolve
-export function createPending({ resolve, userId, options, question, source, timeoutMinutes, onTimeout }: {
+export function createPending({ resolve, userId, options, question, source, askUser, timeoutMinutes, onTimeout }: {
   resolve: (answer: string | null | undefined) => void;
   userId: string;
   options: string[] | null;
   question: string;
   source?: string;
+  askUser?: Omit<AskUserPendingContext, 'selected'>;
   timeoutMinutes?: number;
   onTimeout?: () => void;
 }): string {
@@ -40,7 +63,10 @@ export function createPending({ resolve, userId, options, question, source, time
     onTimeout?.();
     resolve(null); // null = 超时
   }, timeoutMinutes * 60_000);
-  pending.set(id, { resolve, userId, messageId: null, options, question, source, timer });
+  pending.set(id, {
+    resolve, userId, messageId: null, options, question, source, timer,
+    askUser: askUser ? { ...askUser, selected: [] } : undefined,
+  });
   return id;
 }
 
@@ -79,8 +105,8 @@ export const md = (s?: string | null): string =>
 // 模板色复用 SDK 的 InteractiveCardHeaderTemplate 取值
 export type CardTemplate = 'blue' | 'wathet' | 'turquoise' | 'green' | 'yellow' | 'orange' | 'red' | 'carmine' | 'violet' | 'purple' | 'indigo' | 'grey';
 
-// 按钮回调携带: d=decisionId, a=answer — 与 server 侧 card.action.trigger handler 约定
-export interface CardCallbackValue { d: string; a: string }
+// 按钮回调携带: d=decisionId, a=answer; op 仅供 AskUserQuestion 多选切换/提交使用
+export interface CardCallbackValue { d: string; a: string; op?: 'toggle' | 'submit' }
 
 export type CardElement =
   | { tag: 'markdown'; content: string }
@@ -115,7 +141,7 @@ export interface CodexHook extends Omit<ClaudeHook, 'tool_input'> {
   tool_input?: unknown;
 }
 
-type HookNotice = Pick<ClaudeHook, 'hook_event_name' | 'notification_type' | 'cwd' | 'message' | 'reason'>;
+type HookNotice = Pick<ClaudeHook, 'hook_event_name' | 'notification_type' | 'cwd' | 'message' | 'reason' | 'tool_name'>;
 
 export type Card = CardV2;
 
@@ -152,6 +178,100 @@ export function questionCard({ id, question, options, source, timeoutSec }: {
   return mkCard('orange', title, elements);
 }
 
+export const ASK_USER_SUBMIT = '✅ 提交选择';
+
+// Claude Code AskUserQuestion 卡片: 显示完整问题与选项说明；多选先切换选项，再显式提交。
+export function askUserQuestionCard({ id, prompt, index, total, dir, timeoutSec, selected = [] }: {
+  id: string;
+  prompt: AskUserPrompt;
+  index: number;
+  total: number;
+  dir?: string;
+  timeoutSec?: number;
+  selected?: string[];
+}): Card {
+  const where = dir ? ` · ${dir}` : '';
+  const progress = total > 1 ? ` · ${index + 1}/${total}` : '';
+  const heading = prompt.header ? `**${md(prompt.header)}**\n` : '';
+  const elements: CardElement[] = [
+    { tag: 'markdown', content: `${heading}${md(prompt.question)}` },
+    { tag: 'hr' },
+  ];
+
+  for (const option of prompt.options) {
+    if (option.description) {
+      elements.push({ tag: 'markdown', content: `**${md(option.label)}**\n${md(option.description)}` });
+    }
+    const checked = selected.includes(option.label);
+    const label = prompt.multiSelect ? `${checked ? '☑' : '☐'} ${option.label}` : option.label;
+    elements.push(mkBtn(label, {
+      d: id,
+      a: option.label,
+      ...(prompt.multiSelect ? { op: 'toggle' as const } : {}),
+    }, !prompt.multiSelect && option === prompt.options[0]));
+  }
+
+  if (prompt.multiSelect) {
+    elements.push(
+      { tag: 'hr' },
+      { tag: 'markdown', content: selected.length
+        ? `已选择：**${md(selected.join('、'))}**`
+        : '这是多选题，请先选择一项或多项，再点提交。' },
+      mkBtn(`${ASK_USER_SUBMIT}${selected.length ? ` (${selected.length})` : ''}`, { d: id, a: ASK_USER_SUBMIT, op: 'submit' }, selected.length > 0),
+    );
+  }
+
+  elements.push({ tag: 'markdown', content: '*也可以长按引用本条消息，回复自定义答案*' });
+  if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内回复有效，超时回落到 Claude Code 终端` });
+  return mkCard('orange', `❓ Claude 需要你回答${progress}${where}`, elements);
+}
+
+// 严格识别 Claude Code 的 AskUserQuestion 输入；格式异常时不远程作答，交回本地界面。
+export function parseAskUserQuestions(toolInput: unknown): AskUserPrompt[] {
+  if (!toolInput || typeof toolInput !== 'object' || Array.isArray(toolInput)) return [];
+  const raw = (toolInput as Record<string, unknown>).questions;
+  if (!Array.isArray(raw) || raw.length < 1 || raw.length > 4) return [];
+
+  const parsed: AskUserPrompt[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return [];
+    const q = item as Record<string, unknown>;
+    if (typeof q.question !== 'string' || !q.question.trim() || !Array.isArray(q.options)) return [];
+    const options: AskUserOption[] = [];
+    for (const value of q.options) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+      const option = value as Record<string, unknown>;
+      if (typeof option.label !== 'string' || !option.label.trim()) return [];
+      if (option.description !== undefined && typeof option.description !== 'string') return [];
+      const description = typeof option.description === 'string' && option.description ? option.description : undefined;
+      options.push(description ? { label: option.label, description } : { label: option.label });
+    }
+    parsed.push({
+      question: q.question,
+      ...(typeof q.header === 'string' && q.header ? { header: q.header } : {}),
+      options,
+      multiSelect: q.multiSelect === true,
+    });
+  }
+  return parsed;
+}
+
+// AskUserQuestion 的 answers 必须通过 updatedInput 回填；兼容当前 PermissionRequest 路径，
+// 同时保留 PreToolUse 结构，便于之后迁移到官方推荐的专用 matcher。
+export function askUserQuestionHookResponse(
+  hookEventName: 'PermissionRequest' | 'PreToolUse',
+  toolInput: unknown,
+  answers: Record<string, string>,
+): Record<string, unknown> {
+  const original = toolInput && typeof toolInput === 'object' && !Array.isArray(toolInput)
+    ? toolInput as Record<string, unknown>
+    : {};
+  const updatedInput = { ...original, answers };
+  return hookEventName === 'PreToolUse'
+    ? { hookSpecificOutput: { hookEventName, permissionDecision: 'allow', updatedInput } }
+    : { hookSpecificOutput: { hookEventName, decision: { behavior: 'allow', updatedInput } } };
+}
+
 export function resolvedCard(question: string, answer: string | null | undefined, timedOut: boolean, source?: string): Card {
   const title = timedOut ? '⏰ 已超时' : '✅ 已回复';
   return mkCard(timedOut ? 'grey' : 'green', source ? `${title} · ${source}` : title, [
@@ -161,9 +281,13 @@ export function resolvedCard(question: string, answer: string | null | undefined
   ]);
 }
 
-// 通知开关的粒度键: idle_prompt 是 Notification 的子类型, 拆出来单独控 (默认关, 见 db DEFAULT_OFF)
-export const notifyKeyOf = (h: HookNotice = {}): string =>
-  h.hook_event_name === 'Notification' && h.notification_type === 'idle_prompt' ? 'idle_prompt' : (h.hook_event_name ?? '');
+// 通知开关的粒度键: 空闲提醒和 AskUserQuestion 都从宿主事件中拆出来单独控制。
+export const notifyKeyOf = (h: HookNotice = {}): string => {
+  if (h.tool_name === 'AskUserQuestion') return 'AskUserQuestion';
+  return h.hook_event_name === 'Notification' && h.notification_type === 'idle_prompt'
+    ? 'idle_prompt'
+    : (h.hook_event_name ?? '');
+};
 
 // Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
 export function hookCard(hook: HookNotice = {}, agentName = 'Claude'): Card | null {

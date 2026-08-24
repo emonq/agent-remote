@@ -40,7 +40,7 @@
     "timeout_seconds": {
       "type": "number",
       "title": "hook 等待手机回复时长(秒)",
-      "description": "Stop/PermissionRequest hook 等你手机操作的最长时间, 到时回落终端照常处理; MCP 的 ask_user 不受此限(默认不限时)",
+      "description": "AskUserQuestion/Stop/PermissionRequest hook 等你手机操作的最长时间, 到时回落终端照常处理; MCP 的 ask_user 不受此限(默认不限时)",
       "default": 600,
       "min": 10
     }

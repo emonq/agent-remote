@@ -14,6 +14,7 @@ import {
   pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, notifyKeyOf,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
+  askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
   resolveDomain,
@@ -117,9 +118,30 @@ function initFeishu(): boolean {
         const { value } = data.action ?? {};
         if (!value?.d) return {};
         const p = pending.get(value.d);
-        if (!p || !resolvePending(value.d, value.a)) return {};
-        updateCard(p.messageId!, resolvedCard(p.question, value.a, false, p.source)).catch(() => {});
-        logEvent(p.userId, 'solved', { via: 'button', answer: value.a, question: p.question });
+        if (!p) return {};
+
+        // AskUserQuestion 多选按钮只更新服务端选择状态；点“提交选择”才真正唤醒 hook。
+        if (p.askUser?.prompt.multiSelect && value.op === 'toggle') {
+          if (!p.options?.includes(value.a)) return {};
+          const selected = p.askUser.selected;
+          const found = selected.indexOf(value.a);
+          if (found >= 0) selected.splice(found, 1);
+          else selected.push(value.a);
+          await updateCard(p.messageId!, askUserQuestionCard({
+            id: value.d,
+            ...p.askUser,
+          })).catch(() => {});
+          return { toast: { type: 'info', content: found >= 0 ? `已取消 ${value.a}` : `已选择 ${value.a}` } };
+        }
+
+        let answer = value.a;
+        if (p.askUser?.prompt.multiSelect && value.op === 'submit') {
+          if (!p.askUser.selected.length) return { toast: { type: 'warning', content: '请至少选择一项' } };
+          answer = p.askUser.selected.join(', ');
+        }
+        if (!resolvePending(value.d, answer)) return {};
+        updateCard(p.messageId!, resolvedCard(p.question, answer, false, p.source)).catch(() => {});
+        logEvent(p.userId, 'solved', { via: 'button', answer, question: p.question });
         return { toast: { type: 'success', content: '已回复 agent' } };
       },
       'im.message.receive_v1': async (data) => {
@@ -617,8 +639,8 @@ app.post('/file', rawBody, (req: Request, res: Response) => {
     .catch((e: unknown) => { fs.rm(tmp, () => {}); res.status(502).json({ error: `转发飞书失败: ${errStr(e)}` }); });
 });
 
-// Claude Code hook; Stop 且已绑飞书 -> 推送本轮结果并等待手机回复 (无回复放行结束, 回复作为反馈让 Claude 继续)
-// PermissionRequest 且已绑飞书 -> 权限确认推手机, 点按钮远程 allow/deny/切 auto (无回复不决策, 回落终端确认)
+// Claude Code hook; AskUserQuestion -> 飞书逐题作答并用 updatedInput.answers 回填；
+// Stop -> 推送本轮结果等待续跑反馈；其他 PermissionRequest -> 手机远程审批。
 // 等待以客户端连接为准: 不设固定超时, Claude Code hook timeout 掐断连接时 close 兜底放行
 app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: string }, res: Response) => {
   const h = req.body as ClaudeHook;
@@ -628,6 +650,68 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
   // 客户端等待时限 (hook 命令把插件配置的 timeout_seconds 放进 X-Timeout-Seconds): 卡片展示 + 服务端兜底定时器
   const n = Number(req.headers['x-timeout-seconds']);
   const timeoutSec = Number.isFinite(n) && n > 0 ? n : 0;
+
+  const askEvent = h.hook_event_name === 'PermissionRequest' || h.hook_event_name === 'PreToolUse';
+  if (askEvent && h.tool_name === 'AskUserQuestion') {
+    const questions = parseAskUserQuestions(h.tool_input);
+    if (!req.user.feishu_open_id || !questions.length) return res.json({});
+
+    const deadline = Date.now() + (timeoutSec || 24 * 60 * 60) * 1000;
+    const answers: Record<string, string> = {};
+    let activeId: string | undefined;
+    res.on('close', () => { if (activeId) resolvePending(activeId, undefined); });
+    logEvent(req.user.id, 'hook', { event: 'AskUserQuestion', project: dir, questions: questions.length });
+
+    try {
+      for (const [index, prompt] of questions.entries()) {
+        const remainingMs = deadline - Date.now();
+        if (remainingMs <= 0) return res.json({});
+        const remainingSec = Math.max(1, Math.ceil(remainingMs / 1000));
+        const question = prompt.header ? `${prompt.header}: ${prompt.question}` : prompt.question;
+        let resolveFn!: (answer: string | null | undefined) => void;
+        const answerPromise = new Promise<string | null | undefined>((resolve) => { resolveFn = resolve; });
+        const id = createPending({
+          resolve: resolveFn,
+          userId: req.user.id,
+          options: prompt.options.map((option) => option.label),
+          question,
+          source: 'AskUserQuestion',
+          askUser: {
+            prompt,
+            index,
+            total: questions.length,
+            dir,
+            timeoutSec: timeoutSec ? remainingSec : undefined,
+          },
+          timeoutMinutes: remainingSec / 60,
+        });
+        activeId = id;
+        const messageId = await sendCard(askUserQuestionCard({
+          id,
+          prompt,
+          index,
+          total: questions.length,
+          dir,
+          timeoutSec: timeoutSec ? remainingSec : undefined,
+        }), req.user.feishu_open_id);
+        setMessageId(id, messageId);
+        const answer = await answerPromise;
+        activeId = undefined;
+        if (answer == null) {
+          updateCard(messageId!, resolvedCard(question, null, true, 'AskUserQuestion')).catch(() => {});
+          logEvent(req.user.id, 'timeout', { question, event: 'AskUserQuestion' });
+          return res.json({});
+        }
+        answers[prompt.question] = answer;
+      }
+      return res.json(askUserQuestionHookResponse(h.hook_event_name as 'PermissionRequest' | 'PreToolUse', h.tool_input, answers));
+    } catch (e) {
+      console.error('[hook] AskUserQuestion send failed:', errStr(e));
+      if (activeId) resolvePending(activeId, undefined);
+      return res.json({});
+    }
+  }
+
   if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
     const question = `${h.tool_name} 权限请求: ${JSON.stringify(h.tool_input).slice(0, 500)}`;
     let resolveFn!: (a: string | null | undefined) => void;

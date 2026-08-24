@@ -92,7 +92,7 @@ claude plugin install agent-remote@agent-remote --config base_url=<服务地址>
 
 从旧目录版本升级不需要重装或重新填写配置：运行 `claude plugin marketplace update agent-remote && claude plugin update agent-remote@agent-remote`，然后重启 Claude Code 或执行 `/reload-plugins`。
 
-或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填服务地址和 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
+或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填服务地址和 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（AskUserQuestion 远程作答 / Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
 
 安装时可配（事后在 `/plugin` 插件配置里也能改）：`base_url` 服务地址（必填，如 `http://127.0.0.1:3000`）、`token`（必填）、`client_name` 多设备标注、`timeout_seconds` 等手机回复时长（默认 600 秒）。
 
@@ -144,7 +144,7 @@ Codex 每次安装都会生成独立设备凭据，并自动用本机主机名�
 
 装了上面的插件就自带 hook，无需手改客户端配置。Claude Code 可在 `/plugin` 中调整 `timeout_seconds`；Codex 一键安装默认等待 600 秒。推送卡片会显示时限，到点后服务端与客户端同步回落本地处理。
 
-网页「通知开关」可按事件关闭推送（含空闲提醒，默认关）；关掉「任务完成」「权限确认」后直接放行回落终端处理。
+网页「通知开关」可按事件关闭推送（含空闲提醒，默认关）；关掉「Claude 提问」「任务完成」「权限确认」后直接放行回落终端处理。
 
 不想用插件的，也可以手动在 `~/.claude/settings.json` 配 HTTP hook（`type: "http"`），agent 完成任务或需要你时推消息到手机：
 
@@ -158,7 +158,7 @@ Codex 每次安装都会生成独立设备凭据，并自动用本机主机名�
 }
 ```
 
-`Stop`（任务完成）、`Notification`（等待输入/权限确认）、`SessionEnd`（会话结束）、`PermissionRequest`（远程授权），其他事件忽略。标题带项目目录名，多项目并行能分清。
+`AskUserQuestion`（Claude 主动澄清需求，通过 PermissionRequest hook 分流）、`Stop`（任务完成）、`Notification`（等待输入/权限确认）、`SessionEnd`（会话结束）、其他 `PermissionRequest`（远程授权）。标题带项目目录名，多项目并行能分清。
 
 绑定飞书后，`Stop` 会升级为交互式：Claude 本轮结果推到手机，**长按引用该消息回复**即可让 Claude 继续干（回复内容作为反馈注入，例如回复“方案 B，继续实现”）；点「✅ 到此为止」或不回复则放行结束。多项目/多会话同时挂起时请务必引用对应消息，避免回复串台。
 
@@ -167,6 +167,17 @@ Codex 每次安装都会生成独立设备凭据，并自动用本机主机名�
 ```json
 { "type": "http", "url": "http://127.0.0.1:3000/claude", "timeout": 1800, "headers": { "Authorization": "Bearer <MCP_TOKEN>" } }
 ```
+
+### AskUserQuestion：远程回答 Claude 的澄清问题
+
+Claude Code 调用内置 `AskUserQuestion` 时，服务会读取完整的 `questions`，逐题发到飞书，而不是把原始 JSON 当作权限正文截断显示：
+
+- 单选题直接点选项；选项说明完整展示
+- 多选题可依次勾选，再点「提交选择」
+- 一次包含多道题时按 `1/N` 顺序推送，全部回答后 Claude 自动继续
+- 也可以长按引用问题卡，回复自定义答案
+
+服务收齐答案后通过 `updatedInput.answers` 原样回填 Claude Code。超时、发送失败、未绑定飞书或关闭「Claude 提问」通知时不代答，回落到 Claude Code 终端继续询问。
 
 ### PermissionRequest：远程授权
 
