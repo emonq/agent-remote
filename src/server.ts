@@ -228,7 +228,8 @@ function newMcpServer(user: User, clientName = '', baseUrl: string = BASE_URL!):
           logEvent(user.id, 'timeout', { question });
           return { content: [{ type: 'text', text: JSON.stringify({ timeout: true }) }] };
         }
-        updateCard(messageId, resolvedCard(question, answer, false, clientName)).catch(() => {});
+        // 成功态由来源事件更新：按钮走同步 card.action.trigger 响应，文本走 im.message.receive_v1。
+        // 这里再次 patch 会与同步卡片响应竞态，并让文本回复重复更新。
         return { content: [{ type: 'text', text: JSON.stringify({ answer }) }] };
       } finally {
         if (beat) clearInterval(beat);
