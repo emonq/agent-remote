@@ -1,7 +1,7 @@
 {
   "name": "agent-remote",
   "displayName": "Agent Remote",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "把 agent 的问题推到手机(飞书/Lark), 阻塞等待回复; 任务完成/需要授权时推送通知, 手机上远程放行权限",
   "author": {
     "name": "emonq"

@@ -1,6 +1,6 @@
 {
   "name": "agent-remote",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Send Codex questions, completion notices, and permission requests to Feishu/Lark for remote replies.",
   "author": {
     "name": "emonq",
