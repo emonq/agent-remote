@@ -33,3 +33,17 @@ describe('通知开关', () => {
     assert.deepEqual(getNotifyOff('u1'), ['Notification'], '非字符串项过滤');
   });
 });
+
+describe('Codex 设备凭据', () => {
+  it('只存哈希，并在重置用户 token 时统一撤销', async () => {
+    const { db, getUserByClientToken, issueClientToken, rotateToken, upsertUser } = await import('../dist/db.js');
+    const userId = upsertUser('device-user', 'Device User');
+    const token = issueClientToken(userId, 'codex', 'MacBook');
+    assert.match(token, /^arc_/);
+    assert.equal(getUserByClientToken(token)?.id, userId);
+    const row = db.prepare('SELECT token_hash FROM client_credentials WHERE user_id = ?').get(userId);
+    assert.notEqual(row.token_hash, token);
+    rotateToken(userId);
+    assert.equal(getUserByClientToken(token), undefined);
+  });
+});

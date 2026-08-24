@@ -1,0 +1,56 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/activate.mjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\activate.mjs\"",
+            "timeout": 20,
+            "statusMessage": "Connecting Agent Remote"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/codex-hook.mjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\codex-hook.mjs\"",
+            "timeout": 3600,
+            "statusMessage": "Waiting for remote permission decision"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/codex-hook.mjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\codex-hook.mjs\"",
+            "timeout": 3600,
+            "statusMessage": "Waiting for remote follow-up"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${PLUGIN_ROOT}/scripts/codex-hook.mjs\"",
+            "commandWindows": "node \"%PLUGIN_ROOT%\\scripts\\codex-hook.mjs\"",
+            "timeout": 3,
+            "statusMessage": "Sending session notification"
+          }
+        ]
+      }
+    ]
+  }
+}

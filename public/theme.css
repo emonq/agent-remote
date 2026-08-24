@@ -16,6 +16,7 @@
   /* 语义状态色 (shadcn 无内置, 自定义) */
   --ok: hsl(161 94% 24%); --ok-bg: hsl(152 70% 93%);
   --warn: hsl(28 90% 37%); --warn-bg: hsl(44 92% 92%);
+  --connect: hsl(221 83% 53%); --connect-soft: hsl(214 95% 96%);
   --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
 }
 @media (prefers-color-scheme: dark) {
@@ -33,6 +34,7 @@
     --ring: hsl(240 4.9% 40%);
     --ok: hsl(158 64% 52%); --ok-bg: hsl(162 78% 12%);
     --warn: hsl(43 92% 62%); --warn-bg: hsl(34 80% 13%);
+    --connect: hsl(213 94% 68%); --connect-soft: hsl(222 47% 12%);
     --shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.25);
   }
 }
@@ -62,6 +64,35 @@ h1 { font-size: 1.05rem; font-weight: 600; letter-spacing: -.01em; margin: 0; }
 .card h2 { font-size: .875rem; font-weight: 600; letter-spacing: -.01em; margin: 0 0 .8rem; }
 .row { display: flex; align-items: center; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
 
+/* Codex 安装票据：唯一的强调区域，视觉上对应“短期通行证”。 */
+.install-card { position: relative; overflow: hidden; padding-left: 1.65rem; }
+.install-card::before {
+  content: ""; position: absolute; inset: 0 auto 0 0; width: 5px; background: var(--connect);
+}
+.install-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; }
+.install-heading h2 { margin: .1rem 0 .35rem; font-size: 1rem; }
+.eyebrow { color: var(--connect); font: 600 10px/1.2 ui-monospace, "SF Mono", monospace; letter-spacing: .12em; }
+.ticket-life {
+  color: var(--connect); background: var(--connect-soft); border: 1px dashed color-mix(in srgb, var(--connect) 38%, transparent);
+  border-radius: 999px; padding: .2rem .6rem; white-space: nowrap; font-size: 11px; font-weight: 600;
+}
+.install-body p { margin: .15rem 0 .9rem; color: var(--muted-fg); }
+.install-stage { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+.command-ticket { width: 100%; border: 1px solid color-mix(in srgb, var(--connect) 28%, var(--border)); border-radius: calc(var(--radius) - 2px); overflow: hidden; }
+.command-meta {
+  display: flex; justify-content: space-between; align-items: center; padding: .45rem .7rem;
+  background: var(--connect-soft); color: var(--connect); font: 600 11px/1.4 ui-monospace, "SF Mono", monospace; letter-spacing: .02em;
+}
+.command-meta .expired { color: var(--warn); }
+.command-platforms { display: flex; gap: .25rem; padding: .45rem .6rem; border-bottom: 1px dashed var(--border); background: var(--card); }
+.command-platforms button { height: 1.75rem; padding: 0 .65rem; border-color: transparent; background: transparent; box-shadow: none; color: var(--muted-fg); font-size: 12px; }
+.command-platforms button.active { color: var(--connect); background: var(--connect-soft); border-color: color-mix(in srgb, var(--connect) 22%, transparent); }
+.command-ticket pre { max-height: 14rem; margin: 0; padding: .8rem; overflow: auto; background: color-mix(in srgb, var(--muted) 70%, var(--card)); }
+.command-ticket pre code { padding: 0; background: transparent; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.55; }
+.command-actions { display: flex; gap: .5rem; padding: .65rem; border-top: 1px dashed var(--border); }
+.install-hint { width: 100%; }
+.install-error { color: hsl(0 72% 46%); }
+
 /* ── Badge ────────────────────────────── */
 .chip {
   display: inline-flex; align-items: center; gap: .25rem; white-space: nowrap;
@@ -90,6 +121,7 @@ button {
   transition: background-color .15s, border-color .15s, color .15s;
 }
 button:hover { background: var(--accent); }
+button:disabled { cursor: wait; opacity: .62; }
 button:focus-visible { outline: none; box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring); }
 button.primary { background: var(--primary); border-color: var(--primary); color: var(--primary-fg); }
 button.primary:hover { background: color-mix(in srgb, var(--primary) 88%, transparent); }
@@ -125,6 +157,7 @@ code { background: var(--muted); color: var(--fg); padding: .15em .45em; border-
 }
 
 /* ── Table ────────────────────────────── */
+.table-scroll { max-width: 100%; overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; font-size: .875rem; }
 th {
   text-align: left; color: var(--muted-fg); font-weight: 500; font-size: 12px;
@@ -153,3 +186,9 @@ a:hover { text-decoration-color: currentColor; }
 .qr svg { width: 100%; height: 100%; display: block; }
 
 ::selection { background: color-mix(in srgb, var(--ring) 35%, transparent); }
+
+@media (max-width: 520px) {
+  .wrap { padding: 1.5rem .85rem 3rem; }
+  .install-heading { align-items: center; }
+  .command-actions button { flex: 1; }
+}

@@ -4,8 +4,9 @@ import tseslint from 'typescript-eslint';
 
 // 浏览器全局 (前端脚本)
 const browser = Object.fromEntries(
-  ['document', 'location', 'fetch', 'localStorage', 'navigator', 'alert', 'confirm',
-    'setTimeout', 'setInterval', 'clearInterval', 'URLSearchParams', 'console']
+  ['document', 'location', 'history', 'fetch', 'localStorage', 'navigator', 'alert', 'confirm',
+    'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'URL', 'URLSearchParams',
+    'AbortSignal', 'TextDecoder', 'Response', 'console']
     .map((g) => [g, 'readonly']),
 );
 // Node 全局 (测试/配置脚本)
@@ -56,7 +57,7 @@ export default tseslint.config(
 
   {
     // 测试/配置脚本: Node 环境 (process 等), 走 ESLint 推荐集
-    files: ['tests/**/*.mjs', 'eslint.config.js'],
+    files: ['tests/**/*.mjs', 'plugins/**/*.mjs', 'eslint.config.js'],
     extends: [js.configs.recommended],
     languageOptions: { ecmaVersion: 2024, sourceType: 'module', globals: node },
     rules: { ...quality, 'no-unused-vars': noUnused },

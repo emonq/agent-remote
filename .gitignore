@@ -3,6 +3,7 @@ node_modules
 *.env
 !.env.example
 .mcp.json
-!plugin/.mcp.json
+!plugins/claude/agent-remote/.mcp.json
+!plugins/codex/agent-remote/.mcp.json
 data
 dist

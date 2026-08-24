@@ -33,6 +33,16 @@ CREATE TABLE IF NOT EXISTS users (
   token TEXT UNIQUE NOT NULL,          -- MCP/hook Bearer token
   created_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS client_credentials (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  token_hash TEXT UNIQUE NOT NULL,
+  agent TEXT NOT NULL,
+  client_name TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  revoked_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_client_credentials_user ON client_credentials(user_id, created_at DESC);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id TEXT,
@@ -62,6 +72,14 @@ export function upsertUser(ssoSub: string, name: string, id: string = crypto.ran
 
 export const getUserByToken = (token: unknown): User | undefined =>
   db.prepare('SELECT * FROM users WHERE token = ?').get(String(token)) as User | undefined;
+const clientTokenHash = (token: unknown): string =>
+  crypto.createHash('sha256').update(String(token)).digest('hex');
+export const getUserByClientToken = (token: unknown): User | undefined =>
+  db.prepare(`
+    SELECT users.* FROM client_credentials
+    JOIN users ON users.id = client_credentials.user_id
+    WHERE client_credentials.token_hash = ? AND client_credentials.revoked_at IS NULL
+  `).get(clientTokenHash(token)) as User | undefined;
 export const getUserBySub = (sub: string): User | undefined =>
   db.prepare('SELECT * FROM users WHERE sso_sub = ?').get(sub) as User | undefined;
 export const getUserByOpenId = (openId: string): User | undefined =>
@@ -71,7 +89,19 @@ export const getUser = (id: string): User | undefined =>
 
 export function rotateToken(userId: string): string {
   const token = crypto.randomBytes(32).toString('base64url');
-  db.prepare('UPDATE users SET token = ? WHERE id = ?').run(token, userId);
+  db.transaction(() => {
+    db.prepare('UPDATE users SET token = ? WHERE id = ?').run(token, userId);
+    db.prepare('UPDATE client_credentials SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL').run(now(), userId);
+  })();
+  return token;
+}
+
+export function issueClientToken(userId: string, agent: string, clientName: string): string {
+  const token = `arc_${crypto.randomBytes(32).toString('base64url')}`;
+  db.prepare(`
+    INSERT INTO client_credentials (id, user_id, token_hash, agent, client_name, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(crypto.randomUUID(), userId, clientTokenHash(token), agent, clientName, now());
   return token;
 }
 

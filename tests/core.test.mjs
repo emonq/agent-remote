@@ -4,8 +4,9 @@ import assert from 'node:assert/strict';
 import {
   pending, resolvePending, createPending, setMessageId, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
-  permissionCard, permissionHookResponse, fmtPermInput, notifyKeyOf,
-  PERM_ALLOW, PERM_DENY, PERM_AUTO, md, fileKind,
+  permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
+  fmtPermInput, notifyKeyOf,
+  PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, md, fileKind,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
 
@@ -190,6 +191,36 @@ describe('卡片构造', () => {
     assert.equal(fmtPermInput({ file_path: '/a/b.ts' }), '/a/b.ts', '文件工具显示路径');
     assert.match(fmtPermInput({ query: 'x'.repeat(2000) }), /\.\.\.$/, '超长截断');
     assert.ok(fmtPermInput({}).length > 0, '空输入兜底 JSON');
+  });
+
+  it('Codex hook: 权限只允许 allow/deny，Stop 用 block/reason 续跑', () => {
+    const card = permissionCard({
+      id: 'D-codex-perm',
+      toolName: 'shell',
+      toolInput: ['rm', '-rf', 'build'],
+      dir: 'myproj',
+      options: CODEX_PERM_OPTIONS,
+    });
+    const btns = card.body.elements.filter((e) => e.tag === 'button');
+    assert.equal(btns.length, 2, 'Codex 不显示切换 auto');
+    assert.deepEqual(btns.map((b) => b.behaviors[0].value.a), [PERM_ALLOW, PERM_DENY]);
+    assert.match(card.body.elements[0].content, /rm/);
+
+    assert.deepEqual(codexPermissionHookResponse(null), {}, '无远程决定时交回 Codex 默认权限流程');
+    assert.deepEqual(codexPermissionHookResponse(PERM_ALLOW), {
+      hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } },
+    });
+    assert.equal(codexPermissionHookResponse(PERM_DENY).hookSpecificOutput.decision.behavior, 'deny');
+    assert.deepEqual(codexStopHookResponse(null), {}, '超时正常结束');
+    assert.deepEqual(codexStopHookResponse('✅ 到此为止'), {}, '结束按钮正常结束');
+    assert.deepEqual(codexStopHookResponse('继续补测试'), {
+      decision: 'block',
+      reason: '用户回复：继续补测试',
+    });
+
+    const stop = stopCard({ id: 'D-codex-stop', summary: 'done', dir: '', agentName: 'Codex' });
+    assert.ok(stop.body.elements.some((e) => e.tag === 'markdown' && /Codex 继续/.test(e.content)));
+    assert.ok(/Codex 已完成/.test(hookCard({ hook_event_name: 'Stop' }, 'Codex').body.elements[0].content));
   });
 });
 

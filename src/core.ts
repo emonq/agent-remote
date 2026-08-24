@@ -105,6 +105,18 @@ export interface ClaudeHook {
   last_assistant_message?: string;
 }
 
+// Codex hook 与 Claude Code 载荷大体同构，但 PermissionRequest 的 tool_input 是任意 JSON，
+// Stop 还会带 stop_hook_active 防止续跑后再次触发同一条交互。
+export interface CodexHook extends Omit<ClaudeHook, 'tool_input'> {
+  session_id?: string;
+  turn_id?: string;
+  permission_mode?: string;
+  stop_hook_active?: boolean;
+  tool_input?: unknown;
+}
+
+type HookNotice = Pick<ClaudeHook, 'hook_event_name' | 'notification_type' | 'cwd' | 'message' | 'reason'>;
+
 export type Card = CardV2;
 
 export const mkCard = (template: CardTemplate, title: string, elements: CardElement[]): Card => ({
@@ -150,16 +162,16 @@ export function resolvedCard(question: string, answer: string | null | undefined
 }
 
 // 通知开关的粒度键: idle_prompt 是 Notification 的子类型, 拆出来单独控 (默认关, 见 db DEFAULT_OFF)
-export const notifyKeyOf = (h: ClaudeHook = {}): string =>
+export const notifyKeyOf = (h: HookNotice = {}): string =>
   h.hook_event_name === 'Notification' && h.notification_type === 'idle_prompt' ? 'idle_prompt' : (h.hook_event_name ?? '');
 
 // Claude Code hook 事件 → 通知卡片; 不在表里的事件返回 null (忽略, 免得每个工具调用都刷屏)
-export function hookCard(hook: ClaudeHook = {}): Card | null {
+export function hookCard(hook: HookNotice = {}, agentName = 'Claude'): Card | null {
   const dir = hook.cwd ? String(hook.cwd).replace(/\/+$/, '').split('/').pop()! : '';
   const where = dir ? ` · ${dir}` : '';
   const m: Record<string, { icon: string; title: string; color: CardTemplate; body: string } | undefined> = {
-    Stop: { icon: '✅', title: '任务完成', color: 'green', body: 'Claude 已完成当前工作，可以回来查看了' },
-    Notification: { icon: '🔔', title: '需要你注意', color: 'orange', body: hook.message || 'Claude 在等待输入或确认' },
+    Stop: { icon: '✅', title: '任务完成', color: 'green', body: `${agentName} 已完成当前工作，可以回来查看了` },
+    Notification: { icon: '🔔', title: '需要你注意', color: 'orange', body: hook.message || `${agentName} 在等待输入或确认` },
     SessionEnd: { icon: '👋', title: '会话结束', color: 'grey', body: `会话已结束 (${hook.reason || 'exit'})` },
   };
   const conf = m[hook.hook_event_name ?? ''];
@@ -170,12 +182,14 @@ export function hookCard(hook: ClaudeHook = {}): Card | null {
 // Stop hook 交互: Claude 本轮结果推手机, 引用回复可让 Claude 继续
 export const STOP_DONE = '✅ 到此为止'; // 结束按钮的标签, 同时作为应答哨兵: 收到它 = 放行结束
 
-export function stopCard({ id, summary, dir, timeoutSec }: { id: string; summary: string; dir: string; timeoutSec?: number }): Card {
+export function stopCard({ id, summary, dir, timeoutSec, agentName = 'Claude' }: {
+  id: string; summary: string; dir: string; timeoutSec?: number; agentName?: string;
+}): Card {
   const where = dir ? ` · ${dir}` : '';
   const elements: CardElement[] = [
     { tag: 'markdown', content: md(summary) },
     { tag: 'hr' },
-    { tag: 'markdown', content: '**长按引用本条消息回复**可让 Claude 继续（例如：方案 B，继续实现）；等待超时自动结束' },
+    { tag: 'markdown', content: `**长按引用本条消息回复**可让 ${agentName} 继续（例如：方案 B，继续实现）；等待超时自动结束` },
     mkBtn(STOP_DONE, { d: id, a: STOP_DONE }),
   ];
   if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内未回复自动结束` });
@@ -193,28 +207,33 @@ export const PERM_ALLOW = '✅ 允许';
 export const PERM_DENY = '❌ 拒绝';
 export const PERM_AUTO = '🔓 允许并切换 auto';
 export const PERM_OPTIONS = [PERM_ALLOW, PERM_DENY, PERM_AUTO];
+// Codex 当前的 PermissionRequest 只接受 allow / deny；不支持在 hook 响应里切换权限模式。
+export const CODEX_PERM_OPTIONS = [PERM_ALLOW, PERM_DENY];
 
 // tool_input 摘要: Bash 类显示命令, 文件类显示路径, 其余 JSON 全文, 超长截断
-export function fmtPermInput(toolInput: Record<string, unknown> = {}): string {
-  const command = typeof toolInput.command === 'string' ? toolInput.command : undefined;
-  const filePath = typeof toolInput.file_path === 'string' ? toolInput.file_path : undefined;
-  const oldStr = typeof toolInput.old_string === 'string' ? toolInput.old_string : undefined;
+export function fmtPermInput(toolInput: unknown = {}): string {
+  const input = toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
+    ? toolInput as Record<string, unknown>
+    : null;
+  const command = typeof input?.command === 'string' ? input.command : undefined;
+  const filePath = typeof input?.file_path === 'string' ? input.file_path : undefined;
+  const oldStr = typeof input?.old_string === 'string' ? input.old_string : undefined;
   let s: string;
   if (command !== undefined) s = command;
   else if (filePath !== undefined) s = oldStr !== undefined ? `${filePath} (old: ${oldStr.slice(0, 100)})` : filePath;
-  else s = JSON.stringify(toolInput, null, 2);
+  else s = JSON.stringify(toolInput, null, 2) ?? String(toolInput);
   if (s.length > 1500) s = `${s.slice(0, 1500)}\n...`;
   return s;
 }
 
-export function permissionCard({ id, toolName, toolInput, dir, timeoutSec }: {
-  id: string; toolName: string; toolInput: Record<string, unknown>; dir: string; timeoutSec?: number;
+export function permissionCard({ id, toolName, toolInput, dir, timeoutSec, options = PERM_OPTIONS }: {
+  id: string; toolName: string; toolInput: unknown; dir: string; timeoutSec?: number; options?: string[];
 }): Card {
   const where = dir ? ` · ${dir}` : '';
   const elements: CardElement[] = [
     { tag: 'markdown', content: `**${toolName}** 请求权限:\n\`\`\`\n${fmtPermInput(toolInput)}\n\`\`\`` },
     { tag: 'hr' },
-    ...PERM_OPTIONS.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)),
+    ...options.map((label, i) => mkBtn(label, { d: id, a: label }, i === 0)),
   ];
   if (timeoutSec) elements.push({ tag: 'markdown', content: `⏳ ${fmtDur(timeoutSec)}内未处理将回落终端确认` });
   return mkCard('orange', `🔐 权限确认${where}`, elements);
@@ -228,6 +247,21 @@ export function permissionHookResponse(answer: string | null | undefined): Recor
     : answer === PERM_AUTO
       ? { behavior: 'allow', updatedPermissions: [{ type: 'setMode', mode: 'auto', destination: 'session' }] } // session=仅内存, 会话结束失效
       : { behavior: 'deny', message: answer === PERM_DENY ? '用户在手机上拒绝了此操作' : `用户拒绝: ${answer}` };
+  return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } };
+}
+
+// Codex Stop: block 会把 reason 作为新的用户提示继续当前任务；空对象表示正常结束。
+export const codexStopHookResponse = (answer: string | null | undefined): Record<string, unknown> =>
+  answer == null || answer === STOP_DONE
+    ? {}
+    : { decision: 'block', reason: `用户回复：${answer}` };
+
+// Codex PermissionRequest: 只输出官方支持的 allow / deny 结构；超时或发送失败不作决定。
+export function codexPermissionHookResponse(answer: string | null | undefined): Record<string, unknown> {
+  if (answer == null) return {};
+  const decision = answer === PERM_ALLOW
+    ? { behavior: 'allow' }
+    : { behavior: 'deny', message: answer === PERM_DENY ? '用户在手机上拒绝了此操作' : `用户拒绝: ${answer}` };
   return { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision } };
 }
 

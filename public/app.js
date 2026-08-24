@@ -3,7 +3,10 @@ const $ = (h) => { const t = document.createElement('template'); t.innerHTML = h
 const esc = (s) => { const d = document.createElement('span'); d.textContent = s; return d.innerHTML; };
 
 // 单用户模式的管理凭据: 启动日志里的 key 或 env MCP_TOKEN; 多用户模式忽略 (走 session cookie)
-const KEY = localStorage.getItem('ar_key') || '';
+const URL_KEY = new URLSearchParams(location.search).get('key') || '';
+if (URL_KEY) localStorage.setItem('ar_key', URL_KEY);
+const KEY = URL_KEY || localStorage.getItem('ar_key') || '';
+if (URL_KEY) history.replaceState({}, '', location.pathname);
 const api = (p) => p + (p.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(KEY);
 
 async function main() {
@@ -37,7 +40,7 @@ async function main() {
   // 飞书应用配置 (实例级): 未配置→引导扫码配对; 已配置→(解锁后)可取消配置重扫
   const cfgCard = $('<div class="card"><h2>飞书应用</h2><div class="cfg"></div></div>');
   app.append(cfgCard);
-  const canAdmin = Boolean(me.key_ok || KEY);
+  const canAdmin = Boolean(!me.single || me.key_ok);
   const renderCfg = () => {
     const el = cfgCard.querySelector('.cfg');
     if (!me.app_configured) {
@@ -89,15 +92,91 @@ async function main() {
   };
   renderAcct(me.bound);
 
+  // Codex 一键安装: WebUI 只签发短期票据，长期设备凭据由插件首次启动后写入 PLUGIN_DATA。
+  const installCard = $(`<div class="card install-card">
+    <div class="install-heading"><div><div class="eyebrow">CODEX CONNECTION</div><h2>连接 Codex</h2></div><span class="ticket-life">10 分钟票据</span></div>
+    <div class="install-body"><p>生成一条只属于当前账号的一次性命令。命令会直接下载插件并交给 Codex 安装，所有步骤都清楚可见。</p><div class="install-stage"></div></div>
+  </div>`);
+  app.append(installCard);
+  const installStage = installCard.querySelector('.install-stage');
+  let ticketTimer;
+  const renderInstallAction = () => {
+    clearInterval(ticketTimer);
+    installStage.innerHTML = canAdmin
+      ? '<button id="make-install" class="primary">生成安装命令</button><span class="muted">不运行安装器，命令中不包含长期 Token</span>'
+      : '<span class="muted">解锁管理权限后即可生成安装命令</span>';
+    const make = installStage.querySelector('#make-install');
+    if (!make) return;
+    make.onclick = async () => {
+      make.disabled = true;
+      make.textContent = '正在生成…';
+      const response = await fetch(api('/api/install-ticket'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: 'codex' }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        installStage.innerHTML = `<div class="install-error">${esc(result.error || '生成失败，请稍后重试')}</div><button id="retry-install">重新生成</button>`;
+        installStage.querySelector('#retry-install').onclick = renderInstallAction;
+        return;
+      }
+      const commands = result.commands || { unix: result.command };
+      let commandPlatform = /Win/i.test(navigator.userAgentData?.platform || navigator.platform || '') && commands.powershell
+        ? 'powershell' : 'unix';
+      installStage.innerHTML = `<div class="command-ticket">
+        <div class="command-meta"><span>一次性安装命令</span><span id="ticket-clock">10:00</span></div>
+        <div class="command-platforms" role="group" aria-label="选择终端类型">
+          <button type="button" data-platform="unix">macOS / Linux</button>
+          <button type="button" data-platform="powershell">Windows</button>
+        </div>
+        <pre><code></code></pre>
+        <div class="command-actions"><button id="copy-install" class="primary">复制命令</button><button id="renew-install">重新生成</button></div>
+      </div><div class="muted install-hint">命令只使用下载、解压和 Codex 官方插件命令。运行后打开一个新的 Codex 任务完成连接。</div>`;
+      const commandCode = installStage.querySelector('.command-ticket code');
+      const platformButtons = [...installStage.querySelectorAll('[data-platform]')];
+      const showCommand = (platform) => {
+        if (!commands[platform]) return;
+        commandPlatform = platform;
+        commandCode.textContent = commands[platform];
+        platformButtons.forEach((button) => {
+          const selected = button.dataset.platform === platform;
+          button.classList.toggle('active', selected);
+          button.setAttribute('aria-pressed', String(selected));
+        });
+      };
+      platformButtons.forEach((button) => { button.onclick = () => showCommand(button.dataset.platform); });
+      showCommand(commandPlatform);
+      installStage.querySelector('#copy-install').onclick = async (event) => {
+        await navigator.clipboard.writeText(commands[commandPlatform]);
+        event.target.textContent = '已复制';
+        setTimeout(() => { event.target.textContent = '复制命令'; }, 1200);
+      };
+      installStage.querySelector('#renew-install').onclick = renderInstallAction;
+      const expiresAt = new Date(result.expires_at).getTime();
+      const clock = installStage.querySelector('#ticket-clock');
+      const tick = () => {
+        const seconds = Math.max(0, Math.ceil((expiresAt - Date.now()) / 1000));
+        clock.textContent = `${String(Math.floor(seconds / 60)).padStart(2, '0')}:${String(seconds % 60).padStart(2, '0')}`;
+        if (!seconds) {
+          clearInterval(ticketTimer);
+          clock.textContent = '已过期';
+          clock.classList.add('expired');
+        }
+      };
+      tick();
+      ticketTimer = setInterval(tick, 1000);
+    };
+  };
+  renderInstallAction();
+
   // token: 默认打码, 可显示/复制; env 配置 MCP_TOKEN 时只读 (禁重置), 否则可网页生成/重置
-  const tokenCard = $('<div class="card"><h2>API Token</h2><div class="tok"><div class="muted">加载中…</div></div></div>');
+  const tokenCard = $('<div class="card"><h2>Claude Code / API Token</h2><div class="tok"><div class="muted">加载中…</div></div></div>');
   app.append(tokenCard);
   const renderToken = (t, shown = false, locked) => {
     const el = tokenCard.querySelector('.tok');
     const mask = shown ? t : t.slice(0, 6) + '••••••••••••••••';
     el.innerHTML = `<div class="row"><span class="token">${esc(mask)}</span>
         <span><button id="toggle">${shown ? '隐藏' : '显示'}</button> <button id="copy">复制</button>${locked ? '' : ' <button id="rot" class="danger">重置</button>'}</span></div>
-      <div class="muted" style="margin-top:.4rem">用于 MCP / hook 的 Bearer 认证${locked ? '；来自环境变量 MCP_TOKEN，改 .env 后重启生效' : '，重置后旧 token 立即失效'}</div>`;
+      <div class="muted" style="margin-top:.4rem">用于 Claude Code 或手动 API 接入；Codex 一键安装不需要复制此 Token${locked ? '。该值来自环境变量 MCP_TOKEN' : '。重置后现有 Codex 设备凭据也会失效'}</div>`;
     el.querySelector('#toggle').onclick = () => renderToken(t, !shown, locked);
     el.querySelector('#copy').onclick = async (e) => {
       await navigator.clipboard.writeText(t);
@@ -135,9 +214,9 @@ async function main() {
   }
 
   // 事件
-  const typeZh = { ask: '提问', solved: '已回复', timeout: '超时', hook: 'hook', bind: '绑定', token_rotated: '重置 token' };
+  const typeZh = { ask: '提问', solved: '已回复', timeout: '超时', hook: 'hook', bind: '绑定', token_rotated: '重置 token', install_ticket: '安装票据', client_installed: 'Codex 连接' };
   const ev = $(`<div class="card"><h2>最近事件</h2>
-    <table><thead><tr><th style="width:140px">时间</th><th style="width:72px">类型</th><th>内容</th></tr></thead><tbody></tbody></table>
+    <div class="table-scroll"><table><thead><tr><th style="width:140px">时间</th><th style="width:72px">类型</th><th>内容</th></tr></thead><tbody></tbody></table></div>
     <div class="empty muted" style="display:none">暂无事件</div></div>`);
   app.append(ev);
   const rows = ev.querySelector('tbody');
@@ -148,6 +227,8 @@ async function main() {
     let detail = p.question ?? '';
     if (e.type === 'solved' && p.question) detail = p.answer != null ? `${p.question} → ${p.answer}` : p.question;
     if (e.type === 'hook') detail = [p.message, p.project].filter(Boolean).join(' · ') || p.event || '';
+    if (e.type === 'install_ticket') detail = 'Codex · 十分钟一次性命令';
+    if (e.type === 'client_installed') detail = [p.agent, p.client].filter(Boolean).join(' · ');
     rows.append($(`<tr><td class="muted" style="white-space:nowrap">${new Date(e.created_at).toLocaleString()}</td>
       <td><span class="tag ${esc(e.type)}">${typeZh[e.type] || esc(e.type)}</span></td>
       <td><div class="clip" title="${esc(detail)}">${esc(String(detail))}</div></td></tr>`));

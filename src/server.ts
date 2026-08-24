@@ -13,19 +13,22 @@ import { z } from 'zod';
 import {
   pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, notifyKeyOf,
-  permissionCard, permissionHookResponse, PERM_OPTIONS, mkCard,
+  permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
+  PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
   resolveDomain,
-  type ClaudeHook, type CardCallbackValue,
+  type ClaudeHook, type CodexHook, type CardCallbackValue,
 } from './core.js';
 import {
-  upsertUser, getUserByToken, getUser, getUserByOpenId, rotateToken,
+  upsertUser, getUserByToken, getUserByClientToken, getUser, getUserByOpenId, rotateToken,
+  issueClientToken,
   bindFeishu, unbindFeishu, clearAllBindings, logEvent, listEvents,
   getSetting, setSetting, delSetting, getNotifyOff, setNotifyOff,
   type User,
 } from './db.js';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.js';
 import { startSetup, getSetup, type RegisterAppResult } from './setup.js';
+import { createTarGzip } from './tar-archive.js';
 
 const {
   MCP_TOKEN,            // 未配 SSO 时的单用户 token (兼容旧部署)
@@ -230,12 +233,36 @@ app.use(express.json());
 app.use(express.static('public')); // 前端脚本/页面静态资源 (/app.js /setup.js ...)
 const rawBody = express.raw({ type: () => true, limit: '35mb' }); // /file 专用: 收任意 content-type 的原始字节
 
+function publicBaseUrl(req: Request): string {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const forwardedHost = String(req.headers['x-forwarded-host'] || '').split(',')[0].trim();
+  const protocol = forwardedProto || req.protocol;
+  const host = forwardedHost || req.get('host');
+  const safeOrigin = (candidate: string): string | undefined => {
+    try {
+      const url = new URL(candidate);
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return undefined;
+      if (!/^(?:\[[0-9a-f:.]+\]|[a-z0-9._-]+)$/i.test(url.hostname)) return undefined;
+      return url.origin;
+    } catch { return undefined; }
+  };
+  return safeOrigin(host ? `${protocol}://${host}` : '') || safeOrigin(BASE_URL!) || `http://127.0.0.1:${PORT}`;
+}
+
 // token 认证: 多用户查 DB; 单用户认 single 行的 DB token (网页可生成) 或 env MCP_TOKEN (兼容旧部署)
+function userForToken(token: unknown): User | undefined {
+  if (!token) return undefined;
+  const clientUser = getUserByClientToken(token);
+  if (clientUser) return clientUser;
+  if (MULTIUSER) return getUserByToken(token);
+  const user = getUser('single');
+  return user && (String(token) === user.token || (MCP_TOKEN && String(token) === MCP_TOKEN)) ? user : undefined;
+}
+
 function tokenAuth(req: Request & { user?: User; clientName?: string }, res: Response, next: NextFunction): void {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, '');
-  const u = MULTIUSER ? getUserByToken(token) : getUser('single');
-  const ok = u && (MULTIUSER || token === u.token || (MCP_TOKEN && token === MCP_TOKEN));
-  if (!ok || !u) return void res.status(401).end();
+  const u = userForToken(token);
+  if (!u) return void res.status(401).end();
   req.user = u;
   req.clientName = String(req.headers['x-client-name'] ?? '').trim().slice(0, 20);
   next();
@@ -256,28 +283,41 @@ function userAuth(req: Request & { user?: User | null }, res: Response, next: Ne
     req.user = getUser('single')!;
     return next();
   }
-  return sessionAuth(req, res, next);
+  return sessionAuth(req, res, () => {
+    if (!req.user) return void res.status(401).json({ error: '请先登录' });
+    next();
+  });
 }
 
 app.get('/healthz', (_q: Request, s: Response) => s.send('ok'));
 app.get('/', sessionAuth, (_q: Request, s: Response) => s.sendFile('index.html', { root: 'public' }));
 
 // OIDC
-const states = new Map<string, number>(); // state -> expires (CSRF)
+interface LoginState { expiresAt: number; returnTo: string }
+const states = new Map<string, LoginState>(); // state -> 登录后回到的站内路径
+const safeReturnTo = (value: unknown): string => {
+  const target = typeof value === 'string' ? value : '/';
+  return target.startsWith('/') && !target.startsWith('//') && !target.includes('\\') ? target : '/';
+};
 app.get('/auth/login', async (req: Request, res: Response) => {
+  for (const [key, value] of states) if (value.expiresAt < Date.now()) states.delete(key);
   const state = crypto.randomBytes(16).toString('base64url');
-  states.set(state, Date.now() + 600_000);
+  states.set(state, { expiresAt: Date.now() + 600_000, returnTo: safeReturnTo(req.query.return_to) });
   res.redirect(await loginUrl(state));
 });
 app.get('/auth/callback', async (req: Request, res: Response) => {
   const { code, state } = req.query as { code?: string; state?: string };
-  if (!code || !state || !states.get(state)) return res.status(400).send('bad state');
+  const loginState = state ? states.get(state) : undefined;
+  if (!code || !state || !loginState || loginState.expiresAt < Date.now()) {
+    if (state) states.delete(state);
+    return res.status(400).send('bad state');
+  }
   states.delete(state);
   try {
     const { sub, name } = await handleCallback(code);
     const userId = upsertUser(sub, name);
     res.setHeader('set-cookie', `session=${signSession(userId)}; Path=/; HttpOnly; Max-Age=2592000; SameSite=Lax`);
-    res.redirect('/');
+    res.redirect(loginState.returnTo);
   } catch (e) {
     res.status(500).send(`login failed: ${(e as Error).message}`);
   }
@@ -383,11 +423,180 @@ app.post('/api/unconfigure', (req: Request, res: Response) => {
   res.json({ ok: true });
 });
 
+// ---------- Codex 一键安装包 ----------
+// WebUI 只签发十分钟有效的一次性票据。下载到本机的插件包包含服务地址和票据，
+// 不包含用户主 token；Codex 首次启动后再把票据兑换成独立、可撤销的设备 token。
+interface InstallTicket {
+  userId: string;
+  agent: 'codex';
+  baseUrl: string;
+  expiresAt: number;
+  redeemedAt?: number;
+  redeemedToken?: string;
+  clientName?: string;
+}
+
+const installTickets = new Map<string, InstallTicket>();
+const installTicketLifetimeMs = 10 * 60_000;
+const redeemedRetryMs = 60_000;
+const codexPluginDir = path.resolve(process.env.CODEX_PLUGIN_DIR || 'plugins/codex/agent-remote');
+const codexPluginFiles = [
+  '.codex-plugin/plugin.json',
+  '.mcp.json',
+  'hooks/hooks.json',
+  'scripts/activate.mjs',
+  'scripts/codex-hook.mjs',
+  'scripts/config.mjs',
+  'scripts/mcp-proxy.mjs',
+  'README.md',
+];
+
+const installTicketKey = (value: unknown): string =>
+  crypto.createHash('sha256').update(String(value)).digest('hex');
+
+function cleanupInstallTickets(): void {
+  const now = Date.now();
+  for (const [key, ticket] of installTickets) {
+    const removeAt = ticket.redeemedAt ? ticket.redeemedAt + redeemedRetryMs : ticket.expiresAt;
+    if (removeAt <= now) installTickets.delete(key);
+  }
+}
+
+function getInstallTicket(raw: unknown): InstallTicket | undefined {
+  const value = String(raw || '');
+  if (!/^[A-Za-z0-9_-]{40,}$/.test(value)) return undefined;
+  return installTickets.get(installTicketKey(value));
+}
+
+function codexInstallBundle(connectUrl: string, cachebuster: string): object {
+  const files = codexPluginFiles.map((relativePath) => {
+    const absolutePath = path.join(codexPluginDir, relativePath);
+    let content = fs.readFileSync(absolutePath, 'utf8');
+    if (relativePath === '.codex-plugin/plugin.json') {
+      const manifest = JSON.parse(content) as { version?: string };
+      const baseVersion = String(manifest.version || '0.0.0').split('+')[0];
+      manifest.version = `${baseVersion}+codex.install-${cachebuster}`;
+      content = `${JSON.stringify(manifest, null, 2)}\n`;
+    }
+    return { path: relativePath, content };
+  });
+  files.push({
+    path: 'bootstrap.json',
+    content: `${JSON.stringify({ version: 1, connectUrl, clientName: 'codex', timeoutSeconds: 600 }, null, 2)}\n`,
+  });
+  return {
+    schema_version: 1,
+    agent: 'codex',
+    marketplace: {
+      name: 'agent-remote-install',
+      interface: { displayName: 'Agent Remote' },
+      plugins: [{
+        name: 'agent-remote',
+        source: { source: 'local', path: './plugins/agent-remote' },
+        policy: { installation: 'AVAILABLE', authentication: 'ON_INSTALL' },
+        category: 'Productivity',
+      }],
+    },
+    plugin: { name: 'agent-remote', selector: 'agent-remote@agent-remote-install' },
+    files,
+  };
+}
+
+function codexInstallArchive(connectUrl: string, cachebuster: string): Buffer {
+  const bundle = codexInstallBundle(connectUrl, cachebuster) as {
+    marketplace: object;
+    plugin: { name: string };
+    files: Array<{ path: string; content: string }>;
+  };
+  return createTarGzip([
+    { path: '.agents/plugins/marketplace.json', content: `${JSON.stringify(bundle.marketplace, null, 2)}\n` },
+    ...bundle.files.map((file) => ({ path: `plugins/${bundle.plugin.name}/${file.path}`, content: file.content })),
+  ]);
+}
+
+function codexInstallCommands(connectUrl: string): { unix: string; powershell: string } {
+  const selector = 'agent-remote@agent-remote-install';
+  const unix = `AGENT_REMOTE_CODEX_DIR=\"\${XDG_DATA_HOME:-$HOME/.local/share}/agent-remote/codex\" && AGENT_REMOTE_CODEX_ARCHIVE=\"$AGENT_REMOTE_CODEX_DIR/agent-remote-codex.tgz\" && mkdir -p \"$AGENT_REMOTE_CODEX_DIR\" && curl -fsSL ${JSON.stringify(connectUrl)} --output \"$AGENT_REMOTE_CODEX_ARCHIVE\" && tar -xzf \"$AGENT_REMOTE_CODEX_ARCHIVE\" -C \"$AGENT_REMOTE_CODEX_DIR\" && rm -f \"$AGENT_REMOTE_CODEX_ARCHIVE\" && codex plugin marketplace add \"$AGENT_REMOTE_CODEX_DIR\" --json && codex plugin add ${selector} --json && (codex plugin remove agent-remote@agent-remote --json >/dev/null 2>&1 || true) && rm -f \"$HOME/.agent-remote/config.json\"`;
+  const powershell = `$ErrorActionPreference='Stop'; $AgentRemoteCodexDir=Join-Path $env:LOCALAPPDATA 'Agent Remote\\codex'; $AgentRemoteCodexArchive=Join-Path $env:TEMP 'agent-remote-codex.tgz'; New-Item -ItemType Directory -Force -Path $AgentRemoteCodexDir | Out-Null; Invoke-WebRequest -UseBasicParsing -Uri '${connectUrl}' -OutFile $AgentRemoteCodexArchive; & tar.exe -xzf $AgentRemoteCodexArchive -C $AgentRemoteCodexDir; if ($LASTEXITCODE -ne 0) { throw '解压 Codex 插件失败' }; Remove-Item $AgentRemoteCodexArchive -Force; & codex plugin marketplace add $AgentRemoteCodexDir --json; if ($LASTEXITCODE -ne 0) { throw '添加 Codex marketplace 失败' }; & codex plugin add ${selector} --json; if ($LASTEXITCODE -ne 0) { throw '安装 Codex 插件失败' }; & codex plugin remove agent-remote@agent-remote --json 2>$null; Remove-Item (Join-Path $HOME '.agent-remote\\config.json') -Force -ErrorAction SilentlyContinue`;
+  return { unix, powershell };
+}
+
+app.post('/api/install-ticket', userAuth, (req: Request & { user: User }, res: Response) => {
+  cleanupInstallTickets();
+  if (installTickets.size >= 1000) return res.status(429).json({ error: '安装请求过多，请稍后重试' });
+  const agent = String((req.body as { agent?: unknown } | undefined)?.agent || 'codex');
+  if (agent !== 'codex') return res.status(400).json({ error: '目前只支持生成 Codex 安装包' });
+  const rawTicket = crypto.randomBytes(32).toString('base64url');
+  const baseUrl = publicBaseUrl(req);
+  const expiresAt = Date.now() + installTicketLifetimeMs;
+  installTickets.set(installTicketKey(rawTicket), { userId: req.user.id, agent: 'codex', baseUrl, expiresAt });
+  const connectUrl = `${baseUrl}/install/codex/${rawTicket}`;
+  const commands = codexInstallCommands(connectUrl);
+  logEvent(req.user.id, 'install_ticket', { agent: 'codex' });
+  res.set('Cache-Control', 'no-store').json({
+    agent: 'codex',
+    command: commands.unix,
+    commands,
+    expires_at: new Date(expiresAt).toISOString(),
+    expires_in: installTicketLifetimeMs / 1000,
+  });
+});
+
+app.get('/install/codex/:ticket', (req: Request, res: Response) => {
+  cleanupInstallTickets();
+  const ticket = getInstallTicket(req.params.ticket);
+  res.set('Cache-Control', 'no-store');
+  if (!ticket || ticket.expiresAt <= Date.now()) return res.status(410).json({ error: '安装命令已过期，请回到 WebUI 重新生成' });
+  if (ticket.redeemedAt) return res.status(409).json({ error: '安装命令已使用，请回到 WebUI 重新生成' });
+  const connectUrl = `${ticket.baseUrl}/install/codex/${req.params.ticket}`;
+  try {
+    const archive = codexInstallArchive(connectUrl, installTicketKey(req.params.ticket).slice(0, 12));
+    res.set({
+      'Content-Disposition': 'attachment; filename="agent-remote-codex.tgz"',
+      'Content-Type': 'application/gzip',
+    });
+    return res.send(archive);
+  } catch (error) {
+    console.error(`[codex install] package: ${errStr(error)}`);
+    return res.status(503).json({ error: 'Codex 插件包暂不可用' });
+  }
+});
+
+app.post('/install/codex/:ticket', (req: Request, res: Response) => {
+  cleanupInstallTickets();
+  const ticket = getInstallTicket(req.params.ticket);
+  res.set('Cache-Control', 'no-store');
+  if (!ticket) return res.status(410).json({ error: '安装票据无效或已过期，请回到 WebUI 重新生成' });
+  if (!ticket.redeemedAt && ticket.expiresAt <= Date.now()) return res.status(410).json({ error: '安装票据已过期，请回到 WebUI 重新生成' });
+  const user = getUser(ticket.userId);
+  if (!user) return res.status(410).json({ error: '安装票据对应的账号已不存在' });
+  if (!ticket.redeemedToken) {
+    const requestedName = String((req.body as { client_name?: unknown } | undefined)?.client_name || 'codex');
+    ticket.clientName = requestedName.trim().slice(0, 20) || 'codex';
+    ticket.redeemedToken = issueClientToken(user.id, ticket.agent, ticket.clientName);
+    ticket.redeemedAt = Date.now();
+    logEvent(user.id, 'client_installed', { agent: ticket.agent, client: ticket.clientName });
+  }
+  return res.json({
+    version: 2,
+    base_url: ticket.baseUrl,
+    token: ticket.redeemedToken,
+    client_name: ticket.clientName,
+    timeout_seconds: 600,
+    user_name: user.name,
+    bound: Boolean(user.feishu_open_id),
+  });
+});
+
+app.get('/client/status', tokenAuth, (req: Request & { user: User; clientName?: string }, res: Response) => {
+  res.set('Cache-Control', 'no-store').json({ ok: true, user_name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: MULTIUSER, client_name: req.clientName || 'codex' });
+});
+
 // MCP endpoint
 app.all('/mcp', tokenAuth, async (req: Request & { user: User; clientName?: string }, res: Response) => {
   try {
     const t = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
-    await newMcpServer(req.user, req.clientName ?? '', `http://${req.headers.host}`).connect(t);
+    await newMcpServer(req.user, req.clientName ?? '', publicBaseUrl(req)).connect(t);
     await t.handleRequest(req, res, req.body);
   } catch (e) {
     res.status(500).json({ error: String(e) });
@@ -470,6 +679,101 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
     logEvent(req.user.id, 'hook', { event: h.hook_event_name, message: h.message || '', project: dir });
   }
   res.json({ ok: true });
+});
+
+// Codex command hooks。Codex 只接受 command hook，因此插件脚本把 stdin 原样 POST 到这里，再把响应 JSON
+// 写回 stdout：PermissionRequest 的 allow/deny 可远程审批；Stop 的 block/reason 可把手机回复续成下一轮。
+// 没有远程决定时必须返回空对象，避免把 Claude 专用的 {ok:true} 当成 Codex hook 非法字段。
+app.post('/codex', tokenAuth, async (req: Request & { user: User; clientName?: string }, res: Response) => {
+  const h = req.body as CodexHook;
+  const dir = h.cwd ? String(h.cwd).replace(/\/+$/, '').split('/').pop() : '';
+  if (getNotifyOff(req.user.id).includes(notifyKeyOf(h))) return res.json({});
+  const n = Number(req.headers['x-timeout-seconds']);
+  const timeoutSec = Number.isFinite(n) && n > 0 ? n : 0;
+  const source = req.clientName ? `Codex · ${req.clientName}` : 'Codex';
+
+  if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
+    const input = JSON.stringify(h.tool_input) ?? String(h.tool_input ?? '');
+    const question = `${h.tool_name || 'Tool'} 权限请求: ${input.slice(0, 500)}`;
+    let resolveFn!: (a: string | null | undefined) => void;
+    const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
+    const id = createPending({
+      resolve: resolveFn,
+      userId: req.user.id,
+      options: CODEX_PERM_OPTIONS,
+      question,
+      source,
+      timeoutMinutes: timeoutSec / 60 || 24 * 60,
+    });
+    logEvent(req.user.id, 'hook', { event: 'PermissionRequest', agent: 'Codex', project: dir, tool: h.tool_name });
+    res.on('close', () => resolvePending(id, undefined));
+    try {
+      const messageId = await sendCard(permissionCard({
+        id,
+        toolName: h.tool_name || 'Tool',
+        toolInput: h.tool_input,
+        dir,
+        timeoutSec,
+        options: CODEX_PERM_OPTIONS,
+      }), req.user.feishu_open_id);
+      setMessageId(id, messageId);
+      const answer = await answerPromise;
+      if (answer == null) {
+        updateCard(messageId!, resolvedCard(question, null, true, source)).catch(() => {});
+        logEvent(req.user.id, 'timeout', { question, agent: 'Codex' });
+      }
+      return res.json(codexPermissionHookResponse(answer));
+    } catch (e) {
+      console.error('[codex hook] send failed:', errStr(e));
+      resolvePending(id, undefined);
+      return res.json({});
+    }
+  }
+
+  if (h.hook_event_name === 'Stop' && h.stop_hook_active) {
+    // 前一次 Stop 已用 block/reason 续跑；这次只通知并放行，防止 Stop hook 无限循环。
+    const card = hookCard(h, 'Codex');
+    if (card && req.user.feishu_open_id) await sendCard(card, req.user.feishu_open_id).catch((e: unknown) => console.error('[codex hook] send failed:', errStr(e)));
+    logEvent(req.user.id, 'hook', { event: 'Stop', agent: 'Codex', project: dir, continued: true });
+    return res.json({});
+  }
+
+  if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
+    const question = `Codex 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
+    let resolveFn!: (a: string | null | undefined) => void;
+    const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
+    const id = createPending({
+      resolve: resolveFn,
+      userId: req.user.id,
+      options: null,
+      question,
+      source: `${source} Stop hook`,
+      timeoutMinutes: timeoutSec / 60 || 24 * 60,
+    });
+    logEvent(req.user.id, 'hook', { event: 'Stop', agent: 'Codex', project: dir });
+    res.on('close', () => resolvePending(id, undefined));
+    try {
+      const messageId = await sendCard(stopCard({ id, summary: question, dir, timeoutSec, agentName: 'Codex' }), req.user.feishu_open_id);
+      setMessageId(id, messageId);
+      const answer = await answerPromise;
+      if (answer == null) {
+        updateCard(messageId!, resolvedCard(question, null, true, `${source} Stop hook`)).catch(() => {});
+        logEvent(req.user.id, 'timeout', { question: 'Codex Stop hook 续跑' });
+      }
+      return res.json(codexStopHookResponse(answer));
+    } catch (e) {
+      console.error('[codex hook] send failed:', errStr(e));
+      resolvePending(id, undefined);
+      return res.json({});
+    }
+  }
+
+  const card = hookCard(h, 'Codex');
+  if (card) {
+    if (req.user.feishu_open_id) await sendCard(card, req.user.feishu_open_id).catch((e: unknown) => console.error('[codex hook] send failed:', errStr(e)));
+    logEvent(req.user.id, 'hook', { event: h.hook_event_name, agent: 'Codex', message: h.message || '', project: dir });
+  }
+  res.json({});
 });
 
 app.listen(PORT, () => console.log(`mcp on :${PORT}/mcp (multiuser=${MULTIUSER})`));

@@ -46,7 +46,42 @@ docker compose up -d --build
 # 或裸跑: npm install && npm start
 ```
 
-## 接给 Claude Code（插件一键安装）
+## 连接 Codex（推荐）
+
+部署完成后打开 Agent Remote WebUI，在「连接 Codex」卡片点**生成安装命令**，复制并在 Codex 所在机器运行：
+
+```bash
+AGENT_REMOTE_CODEX_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/agent-remote/codex"
+mkdir -p "$AGENT_REMOTE_CODEX_DIR"
+curl -fsSL "https://agent-remote.example.com/install/codex/<一次性票据>" --output "$AGENT_REMOTE_CODEX_DIR/agent-remote-codex.tgz"
+tar -xzf "$AGENT_REMOTE_CODEX_DIR/agent-remote-codex.tgz" -C "$AGENT_REMOTE_CODEX_DIR"
+codex plugin marketplace add "$AGENT_REMOTE_CODEX_DIR" --json
+codex plugin add agent-remote@agent-remote-install --json
+```
+
+WebUI 会把这些步骤合成一条可复制命令，并提供 macOS/Linux 和 Windows 两种版本。没有 npm 包、独立安装器或隐藏脚本；命令只下载个性化插件压缩包、解压，再调用 Codex 官方插件命令。这条命令十分钟有效且只能兑换一次，插件包内只有服务地址和安装票据，不包含用户主 Token。安装完成后打开一个新的 Codex 任务：
+
+1. `SessionStart` Hook 用票据兑换独立的设备凭据
+2. 凭据以 `0600` 原子写入 Codex 提供的 `PLUGIN_DATA/config.json`
+3. 安装包中的 `bootstrap.json` 随即删除
+4. MCP 与后续 Hook 只读取 `PLUGIN_DATA`，不会读取共享目录
+
+重新连接或换服务时，回到 WebUI 生成一条新命令再运行即可。命令会移除旧版 Codex 插件，并删除旧方案留下的 `~/.agent-remote/config.json`。
+
+旧的浏览器短码配对、交互式多 Agent 安装、环境变量覆盖、共享配置文件和对话内配置工具均已移除。远程部署必须通过 HTTPS；本机 `http://127.0.0.1` 仍可使用。
+
+Codex 插件复用 `/mcp`，提供 `ask_user` / `send_file`，并通过 `/codex` Hook 适配器实现：
+
+- `Stop`：任务结果推到飞书；引用回复后，用 Codex 的 `block/reason` 机制继续当前任务
+- `PermissionRequest`：手机远程允许或拒绝本次操作
+- `SessionEnd`：会话结束通知
+- 防循环：手机回复触发续跑后，下一次 `Stop` 只发完成通知，不再阻塞
+
+插件入口是 `plugins/codex/agent-remote/.codex-plugin/plugin.json`，MCP 配置是 `plugins/codex/agent-remote/.mcp.json`，Hook 配置是 `plugins/codex/agent-remote/hooks/hooks.json`。Codex 当前的 `PermissionRequest` Hook 只支持 `allow` / `deny`，所以手机卡片只有两个按钮；Claude Code 的“允许并切换 auto”不受影响。未绑定飞书、通知关闭、请求超时或服务不可达时，适配器返回空决定，让 Codex 回落本地流程。
+
+## 安装 Claude Code
+
+Claude Code 继续使用它自己的插件配置界面：
 
 token 从哪拿：多用户在网页登录后查看自己的 token；单用户看 env 的 `MCP_TOKEN`（没配的话在管理页生成）。
 
@@ -54,6 +89,8 @@ token 从哪拿：多用户在网页登录后查看自己的 token；单用户�
 claude plugin marketplace add emonq/agent-remote
 claude plugin install agent-remote@agent-remote --config base_url=<服务地址> --config token=<你的TOKEN>
 ```
+
+从旧目录版本升级不需要重装或重新填写配置：运行 `claude plugin marketplace update agent-remote && claude plugin update agent-remote@agent-remote`，然后重启 Claude Code 或执行 `/reload-plugins`。
 
 或在会话里输入 `/plugin marketplace add emonq/agent-remote`、`/plugin install agent-remote@agent-remote`，弹出配置框时填服务地址和 Token 即可。插件自带 MCP 工具（`ask_user` / `send_file`）**和** hook（Stop / Notification / PermissionRequest / SessionEnd），装完即用，不用再改任何 settings.json。
 
@@ -93,19 +130,19 @@ OIDC_ISSUER / OIDC_CLIENT_ID / OIDC_CLIENT_SECRET / OIDC_REDIRECT_URI / SESSION_
 
 1. 访问服务首页 → 跳 IdP 登录 → 自动建账号
 2. 网页上点「生成绑定码」→ 在飞书给机器人发 `/bind 123456` → 完成飞书绑定（一个飞书号绑一个账号）
-3. 网页查看/重置自己的 API token，接入方式与单用户相同（`Bearer <自己的 token>`）
+3. Codex 直接在网页生成一次性安装命令；Claude Code 或手动 API 接入再查看自己的 API Token
 
 所有事件（提问/回复/超时/hook/绑定）记入 SQLite（`data/agent-remote.db`，docker 已挂卷），网页可查最近 30 条。
 
 ## 多设备标注来源（可选）
 
-一个 token 多个设备用，安装插件时配 `client_name`（如 `laptop`），卡片标题显示 `🤖 laptop 需要你的决策`；手动接入则加 `X-Client-Name` 请求头，效果相同。
+Codex 每次安装都会生成独立设备凭据，并自动用本机主机名作为来源标注。Claude Code 可在插件配置中填写 `client_name`；手动 API 接入则使用 `X-Client-Name` 请求头。卡片标题会显示 `🤖 <名称> 需要你的决策`。
 
 开放性问题回复按**引用**精确路由；多条并行且没带引用时不猜，回红色提示卡要求引用对应消息。
 
 ## 手机通知与远程授权
 
-装了上面的插件就自带全部 hook（`Stop` / `Notification` / `SessionEnd` / `PermissionRequest`），无需手动配置；等待时长用 `--config timeout_seconds=1800` 调整，或在 `/plugin` 插件配置里改。推送卡片会显示这条时限（如 `⏳ 30 分钟内未处理将回落终端确认`），到点服务端与客户端同步收尾。
+装了上面的插件就自带 hook，无需手改客户端配置。Claude Code 可在 `/plugin` 中调整 `timeout_seconds`；Codex 一键安装默认等待 600 秒。推送卡片会显示时限，到点后服务端与客户端同步回落本地处理。
 
 网页「通知开关」可按事件关闭推送（含空闲提醒，默认关）；关掉「任务完成」「权限确认」后直接放行回落终端处理。
 
@@ -154,6 +191,6 @@ npm test        # lint + build + 纯逻辑自检 (pending 生命周期/匹配规
 npm start       # node dist/server.js
 ```
 
-插件在 `plugin/`（含 marketplace 清单），本地试装：`claude plugin marketplace add . && claude plugin install agent-remote@agent-remote`；改完 `plugin/` 重装生效。
+Claude Code 插件在 `plugins/claude/agent-remote/`，由仓库根目录的 `.claude-plugin/marketplace.json` 发布；Codex 插件在 `plugins/codex/agent-remote/`，由仓库根目录的 `.agents/plugins/marketplace.json` 发布。本地试装 Claude 插件：`claude plugin marketplace add . && claude plugin install agent-remote@agent-remote`。改完 Codex 插件后，开发安装要按 Codex 的 cachebuster + 重装流程刷新缓存。
 
 MIT License.
