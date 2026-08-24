@@ -151,6 +151,12 @@ export const mkCard = (template: CardTemplate, title: string, elements: CardElem
   body: { elements },
 });
 
+// card.action.trigger 必须在同步回调中返回新卡片；与消息更新 API 并用会发生客户端状态回滚竞态。
+export const cardActionResponse = (card: Card, type: 'info' | 'success' | 'warning' | 'error', content: string): Record<string, unknown> => ({
+  toast: { type, content },
+  card: { type: 'raw', data: card },
+});
+
 // 2.0 按钮走 behaviors.callback, 回调事件里仍是 data.action.value
 export const mkBtn = (label: string, value: CardCallbackValue, primary = false): CardElement => ({
   tag: 'button',

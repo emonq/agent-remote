@@ -6,7 +6,7 @@ import {
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
-  fmtPermInput, notifyKeyOf,
+  cardActionResponse, fmtPermInput, notifyKeyOf,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, ASK_USER_SUBMIT, md, fileKind,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
@@ -232,6 +232,10 @@ describe('卡片构造', () => {
     assert.match(buttons[0].text.content, /☑/);
     assert.equal(buttons.at(-1).behaviors[0].value.a, ASK_USER_SUBMIT);
     assert.equal(buttons.at(-1).behaviors[0].value.op, 'submit');
+    const callback = cardActionResponse(multi, 'info', '已选择 SSE');
+    assert.equal(callback.card.type, 'raw', '交互回调同步返回 raw 卡片，避免消息更新竞态');
+    assert.equal(callback.card.data, multi);
+    assert.deepEqual(callback.toast, { type: 'info', content: '已选择 SSE' });
 
     const answers = {
       'MCP 配置的作用范围是什么？': '全局共享 (推荐)',

@@ -15,7 +15,7 @@ import {
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, notifyKeyOf,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
-  PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard,
+  PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard, cardActionResponse,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
   resolveDomain,
   type ClaudeHook, type CodexHook, type CardCallbackValue,
@@ -127,11 +127,11 @@ function initFeishu(): boolean {
           const found = selected.indexOf(value.a);
           if (found >= 0) selected.splice(found, 1);
           else selected.push(value.a);
-          await updateCard(p.messageId!, askUserQuestionCard({
+          const card = askUserQuestionCard({
             id: value.d,
             ...p.askUser,
-          })).catch(() => {});
-          return { toast: { type: 'info', content: found >= 0 ? `已取消 ${value.a}` : `已选择 ${value.a}` } };
+          });
+          return cardActionResponse(card, 'info', found >= 0 ? `已取消 ${value.a}` : `已选择 ${value.a}`);
         }
 
         let answer = value.a;
@@ -140,9 +140,9 @@ function initFeishu(): boolean {
           answer = p.askUser.selected.join(', ');
         }
         if (!resolvePending(value.d, answer)) return {};
-        updateCard(p.messageId!, resolvedCard(p.question, answer, false, p.source)).catch(() => {});
+        const card = resolvedCard(p.question, answer, false, p.source);
         logEvent(p.userId, 'solved', { via: 'button', answer, question: p.question });
-        return { toast: { type: 'success', content: '已回复 agent' } };
+        return cardActionResponse(card, 'success', '已回复 agent');
       },
       'im.message.receive_v1': async (data) => {
         console.log('[debug] msg event:', JSON.stringify(data).slice(0, 400));
