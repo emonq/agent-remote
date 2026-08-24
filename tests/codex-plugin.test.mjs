@@ -17,9 +17,12 @@ describe('Codex plugin package', () => {
     const packageVersion = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
     assert.ok(manifest.version === packageVersion || manifest.version.startsWith(`${packageVersion}+codex.`));
     assert.equal(manifest.mcpServers, './.mcp.json');
-    assert.equal(mcp.mcpServers['agent-remote'].command, 'node');
-    assert.ok(mcp.mcpServers['agent-remote'].args[0].endsWith('/scripts/mcp-proxy.mjs'));
-    assert.equal(mcp.mcpServers['agent-remote'].env.PLUGIN_DATA, '${PLUGIN_DATA}');
+    const mcpServer = mcp.mcpServers['agent-remote'];
+    assert.equal(mcpServer.command, 'node');
+    assert.deepEqual(mcpServer.args, ['./scripts/mcp-proxy.mjs']);
+    assert.equal(mcpServer.cwd, '.');
+    assert.equal(mcpServer.env, undefined);
+    assert.doesNotMatch(JSON.stringify(mcpServer), /\$\{PLUGIN_(?:ROOT|DATA)\}/);
     assert.equal(manifest.skills, undefined);
     assert.deepEqual(Object.keys(hooks.hooks).sort(), ['PermissionRequest', 'SessionEnd', 'SessionStart', 'Stop']);
     assert.equal(hooks.hooks.SessionStart[0].hooks[0].timeout, 20);

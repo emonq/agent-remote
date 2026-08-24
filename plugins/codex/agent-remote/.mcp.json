@@ -3,13 +3,9 @@
     "agent-remote": {
       "command": "node",
       "args": [
-        "${PLUGIN_ROOT}/scripts/mcp-proxy.mjs"
+        "./scripts/mcp-proxy.mjs"
       ],
-      "cwd": "${PLUGIN_ROOT}",
-      "env": {
-        "PLUGIN_ROOT": "${PLUGIN_ROOT}",
-        "PLUGIN_DATA": "${PLUGIN_DATA}"
-      },
+      "cwd": ".",
       "tool_timeout_sec": 86400
     }
   }

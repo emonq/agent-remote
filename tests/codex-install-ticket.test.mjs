@@ -73,8 +73,10 @@ describe('Codex one-time install ticket', () => {
       assert.match(ticket.command, /curl -fsSL/);
       assert.match(ticket.command, /codex plugin marketplace add/);
       assert.match(ticket.command, /codex plugin add agent-remote@agent-remote-install/);
+      assert.doesNotMatch(ticket.command, /plugin remove|\.agent-remote\/config\.json/);
       assert.match(ticket.commands.powershell, /Invoke-WebRequest/);
       assert.doesNotMatch(ticket.commands.powershell, /npx|installer/i);
+      assert.doesNotMatch(ticket.commands.powershell, /plugin remove|\.agent-remote[\\/]+config\.json/i);
       assert.equal(ticket.expires_in, 600);
       const connectUrl = ticket.command.match(/curl -fsSL "([^"]+)"/)?.[1];
       assert.ok(connectUrl);

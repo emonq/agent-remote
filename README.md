@@ -66,9 +66,7 @@ WebUI 会把这些步骤合成一条可复制命令，并提供 macOS/Linux 和 
 3. 安装包中的 `bootstrap.json` 随即删除
 4. MCP 与后续 Hook 只读取 `PLUGIN_DATA`，不会读取共享目录
 
-重新连接或换服务时，回到 WebUI 生成一条新命令再运行即可。命令会移除旧版 Codex 插件，并删除旧方案留下的 `~/.agent-remote/config.json`。
-
-旧的浏览器短码配对、交互式多 Agent 安装、环境变量覆盖、共享配置文件和对话内配置工具均已移除。远程部署必须通过 HTTPS；本机 `http://127.0.0.1` 仍可使用。
+重新连接或换服务时，回到 WebUI 生成一条新命令再运行即可。远程部署必须通过 HTTPS；本机 `http://127.0.0.1` 仍可使用。
 
 Codex 插件复用 `/mcp`，提供 `ask_user` / `send_file`，并通过 `/codex` Hook 适配器实现：
 
