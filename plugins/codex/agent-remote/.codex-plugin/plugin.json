@@ -1,6 +1,6 @@
 {
   "name": "agent-remote",
-  "version": "1.4.1+codex.20260824155053",
+  "version": "1.5.0",
   "description": "Send Codex questions, completion notices, and permission requests to Feishu/Lark for remote replies.",
   "author": {
     "name": "emonq",
@@ -30,8 +30,8 @@
     ],
     "websiteURL": "https://github.com/emonq/agent-remote",
     "defaultPrompt": [
-      "\u9700\u8981\u6211\u505a\u51b3\u5b9a\u65f6\uff0c\u901a\u8fc7 Agent Remote \u53d1\u5230\u624b\u673a\u3002",
-      "\u5b8c\u6210\u4efb\u52a1\u540e\u901a\u77e5\u6211\uff0c\u5e76\u7b49\u5f85\u6211\u51b3\u5b9a\u662f\u5426\u7ee7\u7eed\u3002"
+      "需要我做决定时，通过 Agent Remote 发到手机。",
+      "完成任务后通知我，并等待我决定是否继续。"
     ]
   }
 }
