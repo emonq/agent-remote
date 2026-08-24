@@ -38,21 +38,17 @@ export function effectiveConfig() {
   return readStoredConfig();
 }
 
-function validateConnectUrl(value) {
+export function validateConnectUrl(value) {
   const url = new URL(String(value || ''));
-  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname.toLowerCase());
   if (url.username || url.password || url.search || url.hash) throw new Error('安装地址格式无效');
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) {
-    throw new Error('远程 Agent Remote 安装地址必须使用 HTTPS');
-  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('安装地址必须使用 HTTP 或 HTTPS');
   return url.toString();
 }
 
-function validateServiceUrl(value) {
+export function validateServiceUrl(value) {
   const url = new URL(String(value || ''));
-  const loopback = ['localhost', '127.0.0.1', '::1', '[::1]'].includes(url.hostname.toLowerCase());
   if (url.username || url.password || url.search || url.hash) throw new Error('服务地址格式无效');
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && loopback)) throw new Error('远程 Agent Remote 服务必须使用 HTTPS');
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new Error('服务地址必须使用 HTTP 或 HTTPS');
   return url.origin;
 }
 

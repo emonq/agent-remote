@@ -66,7 +66,7 @@ WebUI 会把这些步骤合成一条可复制命令，并提供 macOS/Linux 和 
 3. 安装包中的 `bootstrap.json` 随即删除
 4. MCP 与后续 Hook 只读取 `PLUGIN_DATA`，不会读取共享目录
 
-重新连接或换服务时，回到 WebUI 生成一条新命令再运行即可。远程部署必须通过 HTTPS；本机 `http://127.0.0.1` 仍可使用。
+重新连接或换服务时，回到 WebUI 生成一条新命令再运行即可。Agent Remote 支持 HTTP 与 HTTPS；公网部署仍建议使用 HTTPS。
 
 Codex 插件复用 `/mcp`，提供 `ask_user` / `send_file`，并通过 `/codex` Hook 适配器实现：
 

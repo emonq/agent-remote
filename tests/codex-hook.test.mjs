@@ -6,6 +6,7 @@ import { Buffer } from 'node:buffer';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { validateConnectUrl, validateServiceUrl } from '../plugins/codex/agent-remote/scripts/config.mjs';
 
 const script = 'plugins/codex/agent-remote/scripts/codex-hook.mjs';
 
@@ -24,6 +25,14 @@ const runHook = (payload, env) => new Promise((resolve, reject) => {
 });
 
 describe('Codex hook command adapter', () => {
+  it('允许远程 HTTP 安装地址和服务地址', () => {
+    assert.equal(
+      validateConnectUrl('http://192.168.1.20:3000/install/codex/ticket'),
+      'http://192.168.1.20:3000/install/codex/ticket',
+    );
+    assert.equal(validateServiceUrl('http://agent-remote.lan:3000/codex'), 'http://agent-remote.lan:3000');
+  });
+
   it('转发 stdin/认证头，并把服务端决定原样写回 stdout', async () => {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agent-remote-hook-config-'));
     let received;

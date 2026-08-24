@@ -29,6 +29,7 @@ device-specific credential, atomically saves `config.json` under Codex `PLUGIN_D
 read only that plugin-private config.
 
 To reconnect, generate a new command in the WebUI and run it.
+Both HTTP and HTTPS service URLs are accepted; HTTPS is still recommended for public deployments.
 
 Codex currently supports `allow` and `deny` responses for `PermissionRequest`; the Claude Code
 plugin's “allow and switch auto” option is intentionally not shown here.
