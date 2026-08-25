@@ -1,6 +1,8 @@
-# 构建阶段: 全量依赖 + tsc 编译; 工具链兜底 — better-sqlite3 的 prebuilt 包下载超时(github 不稳)时本地编译
+# 构建阶段: 全量依赖 + tsc 编译; npm 仍可能触发 better-sqlite3 的本地编译
 FROM node:22-alpine AS build
 RUN apk add --no-cache python3 make g++
+# 直接复用镜像内的 Node 头文件，避免 node-gyp 访问 unofficial-builds.nodejs.org
+ENV npm_config_nodedir=/usr/local
 WORKDIR /app
 COPY package.json package-lock.json tsconfig.json ./
 COPY src ./src
