@@ -119,6 +119,64 @@ export interface CardV2 {
   body: { elements: CardElement[] };
 }
 
+// 飞书发送消息接口对卡片消息体的官方上限是 30 KB。富文本 content 字段本身没有
+// 单独的字符数上限，因此卡片未触及整卡上限时不做任何裁剪。
+export const FEISHU_CARD_MAX_BYTES = 30 * 1024;
+export const FEISHU_CARD_TRUNCATION_NOTICE = '…（内容超过飞书单张卡片 30 KB 上限，已截断）';
+
+const cardBytes = (card: CardV2): number => Buffer.byteLength(JSON.stringify(card), 'utf8');
+
+const truncatedMarkdown = (chars: string[], length: number): string => {
+  const prefix = chars.slice(0, length).join('');
+  // 如果恰好截在 Markdown 代码块中，补上结束围栏，避免后续提示也被渲染成代码。
+  const closesFence = ((prefix.match(/```/g) ?? []).length % 2) === 1 ? '\n```' : '';
+  return `${prefix}${closesFence}\n\n${FEISHU_CARD_TRUNCATION_NOTICE}`;
+};
+
+// 按 JSON.stringify 后的 UTF-8 字节数约束整张卡片。优先裁剪最大的 Markdown 正文；
+// 普通卡片直接返回原对象，只有确实超过飞书上限时才创建裁剪副本。
+export function fitCardToByteLimit(card: CardV2, maxBytes = FEISHU_CARD_MAX_BYTES): CardV2 {
+  if (!Number.isInteger(maxBytes) || maxBytes <= 0) throw new Error('飞书卡片字节上限必须是正整数');
+  if (cardBytes(card) <= maxBytes) return card;
+
+  const fitted = JSON.parse(JSON.stringify(card)) as CardV2;
+  const candidates = fitted.body.elements
+    .map((element, index) => ({ element, index }))
+    .filter((item): item is { element: Extract<CardElement, { tag: 'markdown' }>; index: number } => item.element.tag === 'markdown' && item.element.content.length > 0)
+    .sort((a, b) => Buffer.byteLength(b.element.content, 'utf8') - Buffer.byteLength(a.element.content, 'utf8'));
+
+  for (const { element } of candidates) {
+    const original = element.content;
+    const chars = Array.from(original);
+    element.content = truncatedMarkdown(chars, 0);
+
+    // 一段正文清空后仍超限时，继续尝试下一段；这只会发生在一张卡片同时包含
+    // 多段超长 Markdown 的情况下。
+    if (cardBytes(fitted) > maxBytes) continue;
+
+    let low = 0;
+    let high = chars.length - 1;
+    let best = 0;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      element.content = truncatedMarkdown(chars, middle);
+      if (cardBytes(fitted) <= maxBytes) {
+        best = middle;
+        low = middle + 1;
+      } else {
+        high = middle - 1;
+      }
+    }
+    element.content = truncatedMarkdown(chars, best);
+    return fitted;
+  }
+
+  throw new Error(`飞书卡片超过 ${maxBytes} bytes，且无法通过裁剪 Markdown 正文缩小`);
+}
+
+export const serializeCard = (card: CardV2, maxBytes = FEISHU_CARD_MAX_BYTES): string =>
+  JSON.stringify(fitCardToByteLimit(card, maxBytes));
+
 // Claude Code hook 事件载荷 (非飞书; Claude Code 侧定义, 这里只建模用到的字段)
 export interface ClaudeHook {
   hook_event_name?: string;
@@ -154,7 +212,7 @@ export const mkCard = (template: CardTemplate, title: string, elements: CardElem
 // card.action.trigger 必须在同步回调中返回新卡片；与消息更新 API 并用会发生客户端状态回滚竞态。
 export const cardActionResponse = (card: Card, type: 'info' | 'success' | 'warning' | 'error', content: string): Record<string, unknown> => ({
   toast: { type, content },
-  card: { type: 'raw', data: card },
+  card: { type: 'raw', data: fitCardToByteLimit(card) },
 });
 
 // 2.0 按钮走 behaviors.callback, 回调事件里仍是 data.action.value
@@ -340,7 +398,8 @@ export const PERM_OPTIONS = [PERM_ALLOW, PERM_DENY, PERM_AUTO];
 // Codex 当前的 PermissionRequest 只接受 allow / deny；不支持在 hook 响应里切换权限模式。
 export const CODEX_PERM_OPTIONS = [PERM_ALLOW, PERM_DENY];
 
-// tool_input 摘要: Bash 类显示命令, 文件类显示路径, 其余 JSON 全文, 超长截断
+// tool_input 摘要: Bash 类显示命令, 文件类显示路径, 其余显示完整 JSON；
+// 真正触及飞书 30 KB 整卡上限时，由 fitCardToByteLimit 统一按字节裁剪。
 export function fmtPermInput(toolInput: unknown = {}): string {
   const input = toolInput !== null && typeof toolInput === 'object' && !Array.isArray(toolInput)
     ? toolInput as Record<string, unknown>
@@ -350,9 +409,8 @@ export function fmtPermInput(toolInput: unknown = {}): string {
   const oldStr = typeof input?.old_string === 'string' ? input.old_string : undefined;
   let s: string;
   if (command !== undefined) s = command;
-  else if (filePath !== undefined) s = oldStr !== undefined ? `${filePath} (old: ${oldStr.slice(0, 100)})` : filePath;
+  else if (filePath !== undefined) s = oldStr !== undefined ? `${filePath} (old: ${oldStr})` : filePath;
   else s = JSON.stringify(toolInput, null, 2) ?? String(toolInput);
-  if (s.length > 1500) s = `${s.slice(0, 1500)}\n...`;
   return s;
 }
 

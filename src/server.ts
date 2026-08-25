@@ -17,8 +17,8 @@ import {
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard, cardActionResponse,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
-  resolveDomain,
-  type ClaudeHook, type CodexHook, type CardCallbackValue,
+  resolveDomain, serializeCard,
+  type ClaudeHook, type CodexHook, type CardCallbackValue, type Card,
 } from './core.js';
 import {
   upsertUser, getUserByToken, getUserByClientToken, getUser, getUserByOpenId, rotateToken,
@@ -76,16 +76,16 @@ const errStr = (e: unknown): string => {
   return err.code ?? err.msg ?? err.message ?? '<unknown>';
 };
 
-async function sendCard(card: object, openId: string): Promise<string | undefined> {
+async function sendCard(card: Card, openId: string): Promise<string | undefined> {
   const res = await lark!.im.v1.message.create({
     params: { receive_id_type: 'open_id' },
-    data: { receive_id: openId, msg_type: 'interactive', content: JSON.stringify(card) },
+    data: { receive_id: openId, msg_type: 'interactive', content: serializeCard(card) },
   });
   return res.data?.message_id;
 }
 
-function updateCard(messageId: string, card: object) {
-  return lark!.im.v1.message.patch({ path: { message_id: messageId }, data: { content: JSON.stringify(card) } });
+function updateCard(messageId: string, card: Card) {
+  return lark!.im.v1.message.patch({ path: { message_id: messageId }, data: { content: serializeCard(card) } });
 }
 
 // 路径 → 飞书消息: 图片直显, 其余按 file_type 枚举上传后发文件消息; name 为用户看到的文件名(与本地路径无关)
@@ -714,7 +714,8 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
   }
 
   if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
-    const question = `${h.tool_name} 权限请求: ${JSON.stringify(h.tool_input).slice(0, 500)}`;
+    const input = JSON.stringify(h.tool_input) ?? String(h.tool_input ?? '');
+    const question = `${h.tool_name} 权限请求: ${input}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
     const id = createPending({ resolve: resolveFn, userId: req.user.id, options: PERM_OPTIONS, question, timeoutMinutes: timeoutSec / 60 || 24 * 60 }); // 未传时限才用兜底上限
@@ -736,7 +737,7 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
     }
   }
   if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
-    const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
+    const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '')}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
     const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: timeoutSec / 60 || 24 * 60 }); // 未传时限才用兜底上限
@@ -779,7 +780,7 @@ app.post('/codex', tokenAuth, async (req: Request & { user: User; clientName?: s
 
   if (h.hook_event_name === 'PermissionRequest' && req.user.feishu_open_id) {
     const input = JSON.stringify(h.tool_input) ?? String(h.tool_input ?? '');
-    const question = `${h.tool_name || 'Tool'} 权限请求: ${input.slice(0, 500)}`;
+    const question = `${h.tool_name || 'Tool'} 权限请求: ${input}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
     const id = createPending({
@@ -824,7 +825,7 @@ app.post('/codex', tokenAuth, async (req: Request & { user: User; clientName?: s
   }
 
   if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
-    const question = `Codex 本轮结果:\n${String(h.last_assistant_message || '').slice(0, 2000)}`;
+    const question = `Codex 本轮结果:\n${String(h.last_assistant_message || '')}`;
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
     const id = createPending({

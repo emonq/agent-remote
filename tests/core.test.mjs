@@ -1,6 +1,7 @@
 // 纯逻辑自检: pending 生命周期 / 匹配规则 / 卡片构造 / 票据绑定码 (不依赖飞书; 跑前先 build, 导入 dist 产物)
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import {
   pending, resolvePending, createPending, setMessageId, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
@@ -8,6 +9,7 @@ import {
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   cardActionResponse, fmtPermInput, notifyKeyOf,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, ASK_USER_SUBMIT, md, fileKind,
+  FEISHU_CARD_MAX_BYTES, FEISHU_CARD_TRUNCATION_NOTICE, fitCardToByteLimit, serializeCard,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
 } from '../dist/core.js';
 
@@ -191,8 +193,24 @@ describe('卡片构造', () => {
 
     assert.equal(fmtPermInput({ command: 'ls' }), 'ls', 'Bash 显示 command');
     assert.equal(fmtPermInput({ file_path: '/a/b.ts' }), '/a/b.ts', '文件工具显示路径');
-    assert.match(fmtPermInput({ query: 'x'.repeat(2000) }), /\.\.\.$/, '超长截断');
+    const longQuery = `${'x'.repeat(2000)}-末尾仍可见`;
+    assert.ok(fmtPermInput({ query: longQuery }).endsWith('末尾仍可见"\n}'), '未触及整卡 30 KB 时不截断');
+    assert.ok(fmtPermInput({ file_path: '/a/b.ts', old_string: longQuery }).includes('末尾仍可见'), '文件修改旧内容不再固定截到 100 字符');
     assert.ok(fmtPermInput({}).length > 0, '空输入兜底 JSON');
+  });
+
+  it('飞书 30 KB 整卡限制: 限内完整保留, 超限才按 UTF-8 字节裁剪', () => {
+    const withinLimit = `${'完整内容'.repeat(1200)}-末尾仍可见`;
+    const whole = stopCard({ id: 'D-within', summary: withinLimit, dir: '' });
+    assert.equal(fitCardToByteLimit(whole), whole, '限内不复制也不截断');
+    assert.ok(serializeCard(whole).includes('末尾仍可见'), '限内保留末尾');
+
+    const oversized = `开始\n\`\`\`txt\n${'超长中文内容'.repeat(5000)}\n\`\`\`\n末尾`;
+    const fitted = fitCardToByteLimit(stopCard({ id: 'D-large', summary: oversized, dir: '' }));
+    const json = serializeCard(fitted);
+    assert.ok(Buffer.byteLength(json, 'utf8') <= FEISHU_CARD_MAX_BYTES, '序列化卡片不超过官方 30 KB 上限');
+    assert.ok(fitted.body.elements[0].content.includes(FEISHU_CARD_TRUNCATION_NOTICE), '超限时明确标注截断');
+    assert.equal((fitted.body.elements[0].content.match(/```/g) ?? []).length % 2, 0, '截断后代码围栏成对');
   });
 
   it('AskUserQuestion hook: 完整展示、支持多题/多选并通过 updatedInput 回填', () => {
