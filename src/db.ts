@@ -145,3 +145,30 @@ export const getNotifyOff = (userId: string): string[] => {
 };
 export const setNotifyOff = (userId: string, off: unknown): void =>
   setSetting(notifyKey(userId), JSON.stringify(Array.isArray(off) ? off.filter((k) => typeof k === 'string') : []));
+
+export interface StopInterceptSettings {
+  codex: boolean;
+  claude: boolean;
+}
+
+const stopInterceptKey = (userId: string): string => `stop-intercept:${userId}`;
+export const DEFAULT_STOP_INTERCEPT: StopInterceptSettings = { codex: true, claude: true };
+
+export const getStopIntercept = (userId: string): StopInterceptSettings => {
+  const saved = getSetting(stopInterceptKey(userId));
+  if (saved === undefined) return { ...DEFAULT_STOP_INTERCEPT };
+  try {
+    const value: unknown = JSON.parse(saved);
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return { ...DEFAULT_STOP_INTERCEPT };
+    const settings = value as Record<string, unknown>;
+    return {
+      codex: typeof settings.codex === 'boolean' ? settings.codex : DEFAULT_STOP_INTERCEPT.codex,
+      claude: typeof settings.claude === 'boolean' ? settings.claude : DEFAULT_STOP_INTERCEPT.claude,
+    };
+  } catch {
+    return { ...DEFAULT_STOP_INTERCEPT };
+  }
+};
+
+export const setStopIntercept = (userId: string, settings: StopInterceptSettings): void =>
+  setSetting(stopInterceptKey(userId), JSON.stringify(settings));

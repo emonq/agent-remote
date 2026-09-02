@@ -5,7 +5,7 @@ import { Buffer } from 'node:buffer';
 import {
   pending, resolvePending, createPending, setMessageId, matchFreeText,
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
-  permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
+  permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse, stopNoticeCard,
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   cardActionResponse, fmtPermInput, notifyKeyOf,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, ASK_USER_SUBMIT, md, fileKind,
@@ -159,6 +159,14 @@ describe('卡片构造', () => {
     assert.deepEqual(stopHookResponse('方案 B'), {
       hookSpecificOutput: { hookEventName: 'Stop', additionalContext: '用户回复：方案 B' },
     });
+  });
+
+  it('Stop 不拦截时只推送结果，不提供反馈按钮', () => {
+    const card = stopNoticeCard({ summary: '重构完成', dir: 'myproj' });
+    assert.match(card.header.title.content, /myproj/);
+    assert.match(card.body.elements[0].content, /重构完成/);
+    assert.equal(card.body.elements.some((element) => element.tag === 'button'), false);
+    assert.equal(card.body.elements.some((element) => /引用|超时/.test(element.content ?? '')), false);
   });
 
   it('md(): 图片语法降级为链接, 防 2.0 卡片 400', () => {

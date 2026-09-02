@@ -12,7 +12,7 @@ import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import {
   pending, resolvePending, createPending, setMessageId, pendingForUser, matchFreeText,
-  questionCard, resolvedCard, hookCard, stopCard, stopHookResponse, notifyKeyOf,
+  questionCard, resolvedCard, hookCard, stopCard, stopNoticeCard, stopHookResponse, notifyKeyOf,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse,
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard, cardActionResponse,
@@ -24,7 +24,7 @@ import {
   upsertUser, getUserByToken, getUserByClientToken, getUser, getUserByOpenId, rotateToken,
   issueClientToken,
   bindFeishu, unbindFeishu, clearAllBindings, logEvent, listEvents,
-  getSetting, setSetting, delSetting, getNotifyOff, setNotifyOff,
+  getSetting, setSetting, delSetting, getNotifyOff, setNotifyOff, getStopIntercept, setStopIntercept,
   type User,
 } from './db.js';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.js';
@@ -365,15 +365,25 @@ app.get('/api/me', sessionAuth, (req: Request & { user?: User | null }, res: Res
       key_ok: keyOk(req.query.key),
       token_locked: Boolean(MCP_TOKEN), // env 配置的 token 只读展示, 网页不可重置
       notify: getNotifyOff(u.id),
+      stop_intercept: getStopIntercept(u.id),
       events: listEvents(u.id, 30),
     });
   }
   if (!req.user) return res.status(401).json({ login: '/auth/login' });
-  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, app_configured: Boolean(appId && appSecret), notify: getNotifyOff(req.user.id), events: listEvents(req.user.id, 30) });
+  res.json({ name: req.user.name, bound: Boolean(req.user.feishu_open_id), multiuser: true, app_configured: Boolean(appId && appSecret), notify: getNotifyOff(req.user.id), stop_intercept: getStopIntercept(req.user.id), events: listEvents(req.user.id, 30) });
 });
 // 通知开关: body = 关掉的事件名数组 (缺省全开)
 app.post('/api/notify', userAuth, (req: Request & { user: User }, res: Response) => {
   setNotifyOff(req.user.id, req.body);
+  res.json({ ok: true });
+});
+app.post('/api/stop-intercept', userAuth, (req: Request & { user: User }, res: Response) => {
+  const settings = req.body as Record<string, unknown> | null;
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)
+      || typeof settings.codex !== 'boolean' || typeof settings.claude !== 'boolean') {
+    return res.status(400).json({ error: 'codex 和 claude 必须是布尔值' });
+  }
+  setStopIntercept(req.user.id, { codex: settings.codex, claude: settings.claude });
   res.json({ ok: true });
 });
 app.post('/api/rotate-token', userAuth, (req: Request & { user: User }, res: Response) => {
@@ -738,6 +748,12 @@ app.post('/claude', tokenAuth, async (req: Request & { user: User; clientName?: 
   }
   if (h.hook_event_name === 'Stop' && req.user.feishu_open_id) {
     const question = `Claude 本轮结果:\n${String(h.last_assistant_message || '')}`;
+    if (!getStopIntercept(req.user.id).claude) {
+      await sendCard(stopNoticeCard({ summary: question, dir }), req.user.feishu_open_id)
+        .catch((e: unknown) => console.error('[hook] send failed:', errStr(e)));
+      logEvent(req.user.id, 'hook', { event: 'Stop', project: dir, intercepted: false });
+      return res.json({ ok: true });
+    }
     let resolveFn!: (a: string | null | undefined) => void;
     const answerPromise = new Promise<string | null>((r) => { resolveFn = r; });
     const id = createPending({ resolve: resolveFn, userId: req.user.id, options: null, question, source: 'Stop hook', timeoutMinutes: timeoutSec / 60 || 24 * 60 }); // 未传时限才用兜底上限
@@ -814,6 +830,14 @@ app.post('/codex', tokenAuth, async (req: Request & { user: User; clientName?: s
       resolvePending(id, undefined);
       return res.json({});
     }
+  }
+
+  if (h.hook_event_name === 'Stop' && req.user.feishu_open_id && !getStopIntercept(req.user.id).codex) {
+    const question = `Codex 本轮结果:\n${String(h.last_assistant_message || '')}`;
+    await sendCard(stopNoticeCard({ summary: question, dir }), req.user.feishu_open_id)
+      .catch((e: unknown) => console.error('[codex hook] send failed:', errStr(e)));
+    logEvent(req.user.id, 'hook', { event: 'Stop', agent: 'Codex', project: dir, intercepted: false });
+    return res.json({});
   }
 
   if (h.hook_event_name === 'Stop' && h.stop_hook_active) {

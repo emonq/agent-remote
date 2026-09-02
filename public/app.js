@@ -198,10 +198,50 @@ async function main() {
     tokenCard.querySelector('.tok').innerHTML = '<div class="muted">🔒 解锁后可见</div>';
   }
 
+  // Stop 拦截: 通知照常发送，只控制完成消息是否等待飞书反馈。
+  const stopIntercept = {
+    codex: me.stop_intercept?.codex !== false,
+    claude: me.stop_intercept?.claude !== false,
+  };
+  const interceptCard = $(`<div class="card"><h2>Stop 拦截</h2>
+    <div class="muted" style="margin-bottom:.65rem">关闭后仍推送本轮结果，并立即结束本轮。</div>
+    <div class="intercept-list"></div></div>`);
+  app.append(interceptCard);
+  const interceptList = interceptCard.querySelector('.intercept-list');
+  for (const [agent, label] of Object.entries({ codex: 'Codex', claude: 'Claude Code' })) {
+    const row = $(`<label class="intercept-row">
+      <span class="intercept-agent"><strong>${label}</strong><span class="muted intercept-state"></span></span>
+      <input type="checkbox" aria-label="${label} Stop 拦截" ${stopIntercept[agent] ? 'checked' : ''} ${canAdmin ? '' : 'disabled'}>
+      <span class="switch-track" aria-hidden="true"><span></span></span>
+    </label>`);
+    const input = row.querySelector('input');
+    const state = row.querySelector('.intercept-state');
+    const renderState = () => { state.textContent = input.checked ? '等待飞书反馈' : '仅推送，立即结束'; };
+    renderState();
+    input.onchange = async () => {
+      const previous = stopIntercept[agent];
+      stopIntercept[agent] = input.checked;
+      renderState();
+      const controls = [...interceptList.querySelectorAll('input')];
+      controls.forEach((control) => { control.disabled = true; });
+      const response = await fetch(api('/api/stop-intercept'), {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(stopIntercept),
+      }).catch(() => null);
+      if (!response?.ok) {
+        stopIntercept[agent] = previous;
+        input.checked = previous;
+        renderState();
+        alert('保存 Stop 拦截设置失败');
+      }
+      controls.forEach((control) => { control.disabled = !canAdmin; });
+    };
+    interceptList.append(row);
+  }
+
   // 通知开关: 关掉的事件不再推飞书; 交互事件关闭后直接放行, 回落终端处理
-  const NOTIFY_LABELS = { Stop: '任务完成（可续跑）', AskUserQuestion: 'Claude 提问（可远程回答）', Notification: '需要你注意', SessionEnd: '会话结束', PermissionRequest: '权限确认', idle_prompt: '空闲提醒' };
+  const NOTIFY_LABELS = { Stop: '任务完成', AskUserQuestion: 'Claude 提问（可远程回答）', Notification: '需要你注意', SessionEnd: '会话结束', PermissionRequest: '权限确认', idle_prompt: '空闲提醒' };
   const off = new Set(me.notify || []);
-  const nfCard = $('<div class="card"><h2>通知开关</h2><div class="muted" style="margin-bottom:.4rem">关掉的不再推送；「Claude 提问」「任务完成」「权限确认」关闭后直接放行，回落终端处理</div><div class="row" id="nfs" style="flex-wrap:wrap;gap:.6rem"></div></div>');
+  const nfCard = $('<div class="card"><h2>通知开关</h2><div class="muted" style="margin-bottom:.4rem">关掉的不再推送；「Claude 提问」「权限确认」关闭后回落终端处理，「任务完成」关闭后直接放行</div><div class="row" id="nfs" style="flex-wrap:wrap;gap:.6rem"></div></div>');
   app.append(nfCard);
   const nfs = nfCard.querySelector('#nfs');
   for (const [k, label] of Object.entries(NOTIFY_LABELS)) {

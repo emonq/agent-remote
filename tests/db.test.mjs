@@ -34,6 +34,19 @@ describe('通知开关', () => {
   });
 });
 
+describe('Stop 拦截开关', () => {
+  it('Codex 和 Claude Code 默认开启并可独立持久化', async () => {
+    const { getStopIntercept, setStopIntercept, setSetting } = await import('../dist/db.js');
+    assert.deepEqual(getStopIntercept('u1'), { codex: true, claude: true });
+    setStopIntercept('u1', { codex: false, claude: true });
+    assert.deepEqual(getStopIntercept('u1'), { codex: false, claude: true });
+    setStopIntercept('u1', { codex: false, claude: false });
+    assert.deepEqual(getStopIntercept('u1'), { codex: false, claude: false });
+    setSetting('stop-intercept:u2', '{bad json');
+    assert.deepEqual(getStopIntercept('u2'), { codex: true, claude: true });
+  });
+});
+
 describe('Codex 设备凭据', () => {
   it('只存哈希，并在重置用户 token 时统一撤销', async () => {
     const { db, getUserByClientToken, issueClientToken, rotateToken, upsertUser } = await import('../dist/db.js');

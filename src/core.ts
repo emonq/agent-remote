@@ -384,6 +384,11 @@ export function stopCard({ id, summary, dir, timeoutSec, agentName = 'Claude' }:
   return mkCard('green', `✅ 任务完成${where}`, elements);
 }
 
+export function stopNoticeCard({ summary, dir }: { summary: string; dir: string }): Card {
+  const where = dir ? ` · ${dir}` : '';
+  return mkCard('green', `✅ 任务完成${where}`, [{ tag: 'markdown', content: md(summary) }]);
+}
+
 // Stop hook 应答: 有回复 -> additionalContext 让 Claude 继续; 无(超时/发送失败/点结束) -> 放行结束
 export const stopHookResponse = (answer: string | null | undefined): Record<string, unknown> =>
   answer == null || answer === STOP_DONE

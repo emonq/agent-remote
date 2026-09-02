@@ -148,6 +148,32 @@ input {
 input::placeholder { color: var(--muted-fg); }
 input:focus-visible { border-color: var(--ring); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ring) 25%, transparent); }
 
+/* Stop 拦截以两条 agent 通道呈现：轨道亮起表示完成消息会等待手机反馈。 */
+.intercept-list { border: 1px solid var(--border); border-radius: calc(var(--radius) - 2px); overflow: hidden; }
+.intercept-row {
+  position: relative; display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  min-height: 3.5rem; padding: .65rem .8rem; cursor: pointer; background: var(--card);
+}
+.intercept-row + .intercept-row { border-top: 1px solid var(--border); }
+.intercept-row:hover { background: color-mix(in srgb, var(--accent) 55%, transparent); }
+.intercept-agent { display: flex; flex-direction: column; line-height: 1.4; }
+.intercept-agent strong { font-size: .875rem; font-weight: 600; }
+.intercept-state { margin-top: .12rem; }
+.intercept-row input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.switch-track {
+  position: relative; flex: 0 0 auto; width: 2.5rem; height: 1.4rem; padding: 2px;
+  border: 1px solid var(--border); border-radius: 999px; background: var(--muted);
+  transition: background-color .15s, border-color .15s;
+}
+.switch-track > span {
+  display: block; width: 1rem; height: 1rem; border-radius: 50%; background: var(--card);
+  box-shadow: 0 1px 3px rgb(0 0 0 / .22); transition: transform .15s;
+}
+.intercept-row input:checked + .switch-track { background: var(--ok); border-color: var(--ok); }
+.intercept-row input:checked + .switch-track > span { transform: translateX(1.08rem); }
+.intercept-row input:focus-visible + .switch-track { box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--ring); }
+.intercept-row:has(input:disabled) { cursor: not-allowed; opacity: .62; }
+
 /* ── code / token ─────────────────────── */
 code, .token { font-family: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace; font-size: .8125rem; }
 code { background: var(--muted); color: var(--fg); padding: .15em .45em; border-radius: calc(var(--radius) - 6px); }
