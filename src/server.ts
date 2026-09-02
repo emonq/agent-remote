@@ -17,8 +17,9 @@ import {
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
   PERM_OPTIONS, CODEX_PERM_OPTIONS, mkCard, cardActionResponse,
   fileKind, issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode,
-  resolveDomain, serializeCard,
-  type ClaudeHook, type CodexHook, type CardCallbackValue, type Card,
+  resolveDomain, serializeCard, settingsCard, isDecisionCardCallbackValue, isSettingsCardAction,
+  SETTINGS_MENU_EVENT_KEY, NOTIFY_SETTINGS,
+  type ClaudeHook, type CodexHook, type Card,
 } from './core.js';
 import {
   upsertUser, getUserByToken, getUserByClientToken, getUser, getUserByOpenId, rotateToken,
@@ -28,7 +29,9 @@ import {
   type User,
 } from './db.js';
 import { oidcConfigured, loginUrl, handleCallback, signSession, verifySession, bumpSessionVersion } from './auth.js';
-import { startSetup, getSetup, type RegisterAppResult } from './setup.js';
+import {
+  appConfigurationState, configureRegisteredApp, startSetup, getSetup, type RegisterAppResult,
+} from './setup.js';
 import { createTarGzip } from './tar-archive.js';
 
 const {
@@ -64,10 +67,12 @@ const keyOk = (k: unknown): boolean => k === setupKey || (MCP_TOKEN && k === MCP
 
 let lark: Lark.Client | null = null;
 let ws: Lark.WSClient | null = null; // 取消配置时断开旧应用的长连接
+const APP_CONFIG_STATE_SETTING = 'feishu_app_config_state';
 
 // card.action.trigger 回调载荷 (SDK IHandles 未类型化此回调事件, 自建用到的部分)
 interface CardActionTriggerData {
-  action?: { value?: CardCallbackValue; tag?: string };
+  action?: { value?: unknown; tag?: string };
+  operator?: { open_id?: string };
 }
 
 // 错误对象 → 可读字符串: 飞书错误带 code/msg, 标准 Error 带 message, 其余兜底
@@ -114,9 +119,53 @@ function initFeishu(): boolean {
   });
   ws.start({
     eventDispatcher: new Lark.EventDispatcher({}).register({
+      'application.bot.menu_v6': async (data) => {
+        if (data.event_key !== SETTINGS_MENU_EVENT_KEY) return {};
+        const openId = data.operator?.operator_id?.open_id;
+        if (!openId) return {};
+        const user = getUserByOpenId(openId);
+        if (!user) {
+          await sendCard(mkCard('orange', '⚠️ 尚未绑定', [
+            { tag: 'markdown', content: '请先在 Agent Remote 网页生成绑定码，然后向机器人发送 `/bind 123456`。' },
+          ]), openId);
+          return {};
+        }
+        await sendCard(settingsCard({
+          stopIntercept: getStopIntercept(user.id),
+          notifyOff: getNotifyOff(user.id),
+        }), openId);
+        logEvent(user.id, 'settings', { action: 'open', via: 'feishu_menu' });
+        return {};
+      },
       'card.action.trigger': async (data: CardActionTriggerData) => {
-        const { value } = data.action ?? {};
-        if (!value?.d) return {};
+        const value = data.action?.value;
+        if (isSettingsCardAction(value)) {
+          const user = data.operator?.open_id ? getUserByOpenId(data.operator.open_id) : undefined;
+          if (!user) return { toast: { type: 'error', content: '当前飞书用户尚未绑定' } };
+
+          let label: string;
+          if (value.section === 'stop_intercept') {
+            const current = getStopIntercept(user.id);
+            setStopIntercept(user.id, { ...current, [value.key]: value.enabled });
+            label = value.key === 'codex' ? 'Codex Stop 拦截' : 'Claude Code Stop 拦截';
+          } else {
+            const off = new Set(getNotifyOff(user.id));
+            if (value.enabled) off.delete(value.key);
+            else off.add(value.key);
+            setNotifyOff(user.id, [...off]);
+            label = NOTIFY_SETTINGS.find(({ key }) => key === value.key)?.label ?? value.key;
+          }
+
+          logEvent(user.id, 'settings', {
+            section: value.section, key: value.key, enabled: value.enabled, via: 'feishu_card',
+          });
+          return cardActionResponse(settingsCard({
+            stopIntercept: getStopIntercept(user.id),
+            notifyOff: getNotifyOff(user.id),
+          }), 'success', `${label}已${value.enabled ? '开启' : '关闭'}`);
+        }
+
+        if (!isDecisionCardCallbackValue(value)) return {};
         const p = pending.get(value.d);
         if (!p) return {};
 
@@ -182,10 +231,27 @@ function initFeishu(): boolean {
     .catch((e: unknown) => console.error('[feishu ws] start failed:', errStr(e)));
   return true;
 }
+
+// 旧凭据首次启动或代码里的目标配置变化时同步一次；成功指纹落库，普通重启不重复发布。
+async function syncFeishuAppConfiguration(): Promise<void> {
+  const targetState = appConfigurationState(appId);
+  if (getSetting(APP_CONFIG_STATE_SETTING) === targetState) return;
+  try {
+    const configured = await configureRegisteredApp({ appId, appSecret, domain: asDomain(), client: lark ?? undefined });
+    setSetting(APP_CONFIG_STATE_SETTING, targetState);
+    console.log(`[feishu] 已自动同步应用配置并提交发布${configured.version ? ` (${configured.version})` : ''}: ${appId}`);
+  } catch (e: unknown) {
+    console.error(
+      `[feishu] 启动时自动同步应用配置失败: ${errStr(e)}。请确认应用已开通 application:application:patch 权限且当前不在审核中；下次启动会重试。`,
+    );
+  }
+}
+
 if (!initFeishu()) {
   console.log(`未配置飞书应用: 打开 http://127.0.0.1:${PORT}/setup?key=${setupKey} 扫码一键创建并绑定`);
-} else if (!MULTIUSER) {
-  console.log(`单用户管理页(绑定飞书/token): http://127.0.0.1:${PORT}/?key=${setupKey}`);
+} else {
+  void syncFeishuAppConfiguration();
+  if (!MULTIUSER) console.log(`单用户管理页(绑定飞书/token): http://127.0.0.1:${PORT}/?key=${setupKey}`);
 }
 
 // ---------- MCP ----------
@@ -405,8 +471,8 @@ app.get('/api/token', userAuth, (req: Request & { user: User }, res: Response) =
 });
 
 // ---------- 扫码一键创建飞书应用 (/setup) ----------
-// registerApp 成功后: 凭据落 SQLite (env 优先级更高), 单用户顺手把扫码人绑上
-function applySetupResult(r: RegisterAppResult): void {
+// registerApp 成功后: 凭据落 SQLite，自动配置长连接/底栏菜单并提交发布。
+async function applySetupResult(r: RegisterAppResult): Promise<void> {
   appId = r.client_id;
   appSecret = r.client_secret;
   if (r.user_info?.tenant_brand === 'lark' || r.user_info?.tenant_brand === 'feishu') domainStr = r.user_info.tenant_brand;
@@ -414,12 +480,37 @@ function applySetupResult(r: RegisterAppResult): void {
   setSetting('feishu_secret', appSecret);
   setSetting('feishu_domain', domainStr);
   if (!MULTIUSER && r.user_info?.open_id) bindFeishu('single', r.user_info.open_id);
-  logEvent(MULTIUSER ? null : 'single', 'bind', { via: 'scan_setup', app_id: appId });
+
+  let configured: Awaited<ReturnType<typeof configureRegisteredApp>> | null = null;
+  let configurationError: unknown;
+  try {
+    configured = await configureRegisteredApp({ appId, appSecret, domain: asDomain() });
+    setSetting(APP_CONFIG_STATE_SETTING, appConfigurationState(appId));
+  } catch (e: unknown) {
+    configurationError = e;
+  }
+
   initFeishu();
-  console.log(`[setup] 飞书应用已创建并绑定: ${appId}`);
+  logEvent(MULTIUSER ? null : 'single', 'bind', {
+    via: 'scan_setup', app_id: appId, auto_configured: !configurationError,
+    ...(configured?.version ? { version: configured.version } : {}),
+  });
   const me = !MULTIUSER ? getUser('single') : undefined;
+  if (configurationError) {
+    console.error(`[setup] 飞书应用已创建，自动配置失败: ${errStr(configurationError)}`);
+    if (me?.feishu_open_id) {
+      sendCard(mkCard('orange', '⚠️ 飞书应用已创建', [{
+        tag: 'markdown', content: `**${appId}** 已绑定本服务，自动配置未完成：${errStr(configurationError)}`,
+      }]), me.feishu_open_id).catch((e: unknown) => console.error('[setup] card:', errStr(e)));
+    }
+    throw configurationError;
+  }
+
+  console.log(`[setup] 飞书应用已创建、自动配置并提交发布: ${appId}`);
   if (me?.feishu_open_id) {
-    sendCard(mkCard('green', '🎉 飞书应用已就绪', [{ tag: 'markdown', content: `**${appId}** 已创建并绑定本服务。\n\n之后 agent 的提问会直接推到这里。` }]), me.feishu_open_id).catch((e: unknown) => console.error('[setup] card:', errStr(e)));
+    sendCard(mkCard('green', '🎉 飞书应用已就绪', [{
+      tag: 'markdown', content: `**${appId}** 已创建并绑定本服务。\n\n长连接事件、卡片回调和底栏控制面板已自动配置，应用版本已提交发布。`,
+    }]), me.feishu_open_id).catch((e: unknown) => console.error('[setup] card:', errStr(e)));
   }
 }
 
@@ -438,7 +529,7 @@ app.get('/api/setup/status', (req: Request, res: Response, next: NextFunction) =
   const s = getSetup();
   if (!s || (!s.url && !s.result && !s.error)) return res.json({ phase: 'idle' });
   if (s.error) return res.json({ phase: 'error', code: s.error.code, description: s.error.description });
-  if (s.result) return res.json({ phase: 'done' });
+  if (s.result) return res.json({ phase: 'done', warning: s.warning });
   res.json({ phase: 'waiting', url: s.url, qr_svg: s.qrSvg, expire_in: s.expireIn });
 });
 
@@ -448,6 +539,7 @@ app.post('/api/unconfigure', (req: Request, res: Response) => {
   if (FEISHU_APP_ID && FEISHU_APP_SECRET) return res.status(403).json({ error: '凭据来自环境变量 FEISHU_APP_ID/SECRET, 请改 .env 后重启' });
   if (!appId || !appSecret) return res.status(400).json({ error: '尚未配置' });
   delSetting('feishu_app_id'); delSetting('feishu_secret'); delSetting('feishu_domain');
+  delSetting(APP_CONFIG_STATE_SETTING);
   appId = ''; appSecret = ''; domainStr = 'feishu';
   ws?.close(); lark = null;
   clearAllBindings();

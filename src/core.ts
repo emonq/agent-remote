@@ -105,8 +105,44 @@ export const md = (s?: string | null): string =>
 // 模板色复用 SDK 的 InteractiveCardHeaderTemplate 取值
 export type CardTemplate = 'blue' | 'wathet' | 'turquoise' | 'green' | 'yellow' | 'orange' | 'red' | 'carmine' | 'violet' | 'purple' | 'indigo' | 'grey';
 
-// 按钮回调携带: d=decisionId, a=answer; op 仅供 AskUserQuestion 多选切换/提交使用
-export interface CardCallbackValue { d: string; a: string; op?: 'toggle' | 'submit' }
+// 决策按钮携带 d=decisionId, a=answer；设置按钮携带要写入的明确目标状态，
+// 避免快速重复点击或旧卡片把一次操作解释成两次反转。
+export interface DecisionCardCallbackValue { d: string; a: string; op?: 'toggle' | 'submit' }
+
+export const SETTINGS_MENU_EVENT_KEY = 'agent_remote_settings';
+
+export const NOTIFY_SETTINGS = [
+  { key: 'Stop', label: '任务完成' },
+  { key: 'AskUserQuestion', label: 'Claude 提问' },
+  { key: 'Notification', label: '需要你注意' },
+  { key: 'SessionEnd', label: '会话结束' },
+  { key: 'PermissionRequest', label: '权限确认' },
+  { key: 'idle_prompt', label: '空闲提醒' },
+] as const;
+
+export type NotifySettingKey = typeof NOTIFY_SETTINGS[number]['key'];
+export type SettingsCardTarget =
+  | { op: 'settings.set'; section: 'stop_intercept'; key: 'codex' | 'claude' }
+  | { op: 'settings.set'; section: 'notify'; key: NotifySettingKey };
+export type SettingsCardAction = SettingsCardTarget & { enabled: boolean };
+export type CardCallbackValue = DecisionCardCallbackValue | SettingsCardAction;
+
+const NOTIFY_SETTING_KEYS = new Set<string>(NOTIFY_SETTINGS.map(({ key }) => key));
+
+export function isDecisionCardCallbackValue(value: unknown): value is DecisionCardCallbackValue {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  return typeof input.d === 'string' && typeof input.a === 'string'
+    && (input.op === undefined || input.op === 'toggle' || input.op === 'submit');
+}
+
+export function isSettingsCardAction(value: unknown): value is SettingsCardAction {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const input = value as Record<string, unknown>;
+  if (input.op !== 'settings.set' || typeof input.enabled !== 'boolean' || typeof input.key !== 'string') return false;
+  if (input.section === 'stop_intercept') return input.key === 'codex' || input.key === 'claude';
+  return input.section === 'notify' && NOTIFY_SETTING_KEYS.has(input.key);
+}
 
 export type CardElement =
   | { tag: 'markdown'; content: string }
@@ -222,6 +258,27 @@ export const mkBtn = (label: string, value: CardCallbackValue, primary = false):
   type: primary ? 'primary' : 'default',
   behaviors: [{ type: 'callback', value }],
 });
+
+export function settingsCard({ stopIntercept, notifyOff }: {
+  stopIntercept: { codex: boolean; claude: boolean };
+  notifyOff: string[];
+}): Card {
+  const off = new Set(notifyOff);
+  const settingButton = (label: string, enabled: boolean, action: SettingsCardTarget): CardElement =>
+    mkBtn(`${enabled ? '✅' : '⬜'} ${label}：${enabled ? '开' : '关'}`, { ...action, enabled: !enabled }, enabled);
+
+  return mkCard('blue', '⚙️ Agent Remote 控制面板', [
+    { tag: 'markdown', content: '**Stop 拦截**\n开启后，任务完成推送会等待你在飞书续跑或结束；需同时开启下方「任务完成」通知。' },
+    settingButton('Codex', stopIntercept.codex, { op: 'settings.set', section: 'stop_intercept', key: 'codex' }),
+    settingButton('Claude Code', stopIntercept.claude, { op: 'settings.set', section: 'stop_intercept', key: 'claude' }),
+    { tag: 'hr' },
+    { tag: 'markdown', content: '**通知类型**\n开启的事件会推送到当前飞书。' },
+    ...NOTIFY_SETTINGS.map(({ key, label }) => settingButton(label, !off.has(key), {
+      op: 'settings.set', section: 'notify', key,
+    })),
+    { tag: 'markdown', content: '_点击后立即生效，网页控制页会同步显示。_' },
+  ]);
+}
 
 // 秒 → 人话时长 (卡片上的等待时限提示)
 export const fmtDur = (sec: number): string => (sec >= 60 ? `${Math.round(sec / 60)} 分钟` : `${sec} 秒`);

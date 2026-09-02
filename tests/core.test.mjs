@@ -7,7 +7,8 @@ import {
   questionCard, resolvedCard, hookCard, stopCard, stopHookResponse,
   permissionCard, permissionHookResponse, codexPermissionHookResponse, codexStopHookResponse, stopNoticeCard,
   askUserQuestionCard, parseAskUserQuestions, askUserQuestionHookResponse,
-  cardActionResponse, fmtPermInput, notifyKeyOf,
+  cardActionResponse, fmtPermInput, notifyKeyOf, settingsCard,
+  isDecisionCardCallbackValue, isSettingsCardAction, SETTINGS_MENU_EVENT_KEY,
   PERM_ALLOW, PERM_DENY, PERM_AUTO, CODEX_PERM_OPTIONS, ASK_USER_SUBMIT, md, fileKind,
   FEISHU_CARD_MAX_BYTES, FEISHU_CARD_TRUNCATION_NOTICE, fitCardToByteLimit, serializeCard,
   issueUploadTicket, takeUploadTicket, issueBindCode, takeBindCode, resolveDomain,
@@ -77,6 +78,40 @@ describe('pending 生命周期', () => {
 });
 
 describe('卡片构造', () => {
+  it('飞书控制面板显示当前状态，按钮携带明确的目标状态', () => {
+    const card = settingsCard({
+      stopIntercept: { codex: true, claude: false },
+      notifyOff: ['PermissionRequest', 'idle_prompt'],
+    });
+    assert.equal(SETTINGS_MENU_EVENT_KEY, 'agent_remote_settings');
+    assert.equal(card.header.template, 'blue');
+    const buttons = card.body.elements.filter((element) => element.tag === 'button');
+    assert.equal(buttons.length, 8);
+    assert.match(buttons[0].text.content, /Codex：开/);
+    assert.deepEqual(buttons[0].behaviors[0].value, {
+      op: 'settings.set', section: 'stop_intercept', key: 'codex', enabled: false,
+    });
+    assert.match(buttons[1].text.content, /Claude Code：关/);
+    assert.deepEqual(buttons[1].behaviors[0].value, {
+      op: 'settings.set', section: 'stop_intercept', key: 'claude', enabled: true,
+    });
+    assert.match(buttons.at(-1).text.content, /空闲提醒：关/);
+    assert.ok(isSettingsCardAction(buttons.at(-1).behaviors[0].value));
+  });
+
+  it('卡片回调只接受已知的决策和设置结构', () => {
+    assert.ok(isDecisionCardCallbackValue({ d: 'decision', a: '允许' }));
+    assert.ok(isSettingsCardAction({
+      op: 'settings.set', section: 'notify', key: 'Stop', enabled: false,
+    }));
+    assert.equal(isSettingsCardAction({
+      op: 'settings.set', section: 'notify', key: 'unknown', enabled: false,
+    }), false);
+    assert.equal(isSettingsCardAction({
+      op: 'settings.set', section: 'stop_intercept', key: 'other', enabled: true,
+    }), false);
+  });
+
   it('2.0 结构, 按钮为顶层 element, callback value 带 decisionId', () => {
     const card = questionCard({ id: 'D-abc123', question: '部署到生产?', options: ['是', '否'] });
     assert.equal(card.schema, '2.0', 'CardKit 2.0 结构');

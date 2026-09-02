@@ -7,7 +7,13 @@ function show(html) { stage.className = ''; stage.innerHTML = html; }
 
 function render(s) {
   if (s.phase === 'done') {
-    show('<div style="color:var(--ok);font-size:2rem">✅</div><strong>应用创建成功，已绑定本服务</strong><div class="muted" style="margin-top:.5rem">即将返回首页…</div>');
+    if (s.warning) {
+      show(`<div style="color:var(--warn);font-size:2rem">⚠️</div><strong>应用已创建并绑定，自动配置未完成</strong>
+        <div class="muted" style="margin:.5rem 0 1rem">${esc(s.warning.description || s.warning.code)}</div>
+        <button class="primary" onclick="location.href='/'">返回首页</button>`);
+      return true;
+    }
+    show('<div style="color:var(--ok);font-size:2rem">✅</div><strong>应用创建、配置并提交发布成功</strong><div class="muted" style="margin-top:.5rem">企业审批通过后即可使用，即将返回首页…</div>');
     setTimeout(() => location.href = '/', 1500);
     return true; // 停止轮询
   }
@@ -21,7 +27,7 @@ function render(s) {
   if (s.phase === 'waiting' && s.qr_svg) {
     show(`<div class="qr">${s.qr_svg}</div>
       <div><strong>用飞书扫描二维码</strong></div>
-      <div class="muted">确认后自动创建应用并开通权限，无需去开发者后台</div>
+      <div class="muted">确认后自动创建应用、开通权限、配置底栏菜单并提交发布</div>
       <div class="muted" style="margin-top:.4rem">打不开扫码？<a href="${esc(s.url)}">点此打开授权页</a>（约 ${Math.round((s.expire_in || 300) / 60)} 分钟内有效）</div>`);
   }
   return false; // 继续
